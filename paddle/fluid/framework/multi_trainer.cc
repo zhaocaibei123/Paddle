@@ -15,6 +15,7 @@ limitations under the License. */
 #include <string>
 #include "paddle/fluid/framework/device_worker_factory.h"
 #include "paddle/fluid/framework/trainer.h"
+#include "paddle/fluid/platform/lodtensor_printer.h"
 
 #if defined PADDLE_WITH_PSCORE
 #include "paddle/fluid/distributed/service/communicator.h"
@@ -214,7 +215,6 @@ void MultiTrainer::Finalize() {
   if (need_dump_field_ || need_dump_param_) {
     FinalizeDumpEnv();
   }
-#ifdef PADDLE_WITH_HETERPS
   for (size_t i = 0; i < need_merge_var_names_.size(); i++) {
     Variable* root_var = root_scope_->FindVar(need_merge_var_names_[i]);
     if (root_var == nullptr) {
@@ -222,7 +222,11 @@ void MultiTrainer::Finalize() {
     }
     LoDTensor* root_tensor = root_var->GetMutable<LoDTensor>();
 
+#ifdef PADDLE_WITH_HETERPS
     for (size_t j = 0; j < places_.size(); j++) {
+#else
+    for (int j = 0; j < thread_num_; j++) {
+#endif
       Scope* cur_thread_scope = workers_[j]->GetThreadScope();
       Variable* thread_var =
           cur_thread_scope->FindVar(need_merge_var_names_[i]);
@@ -230,6 +234,12 @@ void MultiTrainer::Finalize() {
         continue;
       }
       LoDTensor* thread_tensor = thread_var->GetMutable<LoDTensor>();
+      //TODO: for debug zcb
+      std::stringstream ss;
+      platform::PrintVar(cur_thread_scope, need_merge_var_names_[i],
+                        need_merge_var_names_[i] , &ss);
+      std::cout << ss.str() << std::endl;
+      //debug done
 #define MergeCallback(cpp_type, proto_type)                                    \
   do {                                                                         \
     if (root_tensor->type() == proto_type) {                                   \
@@ -245,10 +255,21 @@ void MultiTrainer::Finalize() {
   } while (0)
       _ForEachDataType_(MergeCallback);
     }
+    //TODO: for debug zcb
+    std::stringstream ss;
+    platform::PrintVar(root_scope_, need_merge_var_names_[i],
+                        need_merge_var_names_[i] , &ss);
+    std::cout << ss.str() << std::endl;
+    //debug done
   }
-  MergeDenseParam();
 
+#ifdef PADDLE_WITH_HETERPS
+  MergeDenseParam();
 #endif
+
+  auto communicator = paddle::distributed::Communicator::GetInstance();
+  communicator->_worker_ptr->flush();
+  VLOG(1) << "MultiTrainer::Finalize ps client flush done";
   root_scope_->DropKids();
 }
 
