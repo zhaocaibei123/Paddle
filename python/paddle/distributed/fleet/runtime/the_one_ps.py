@@ -437,6 +437,18 @@ class Worker:
         return worker_str.format(workers_str)
 
 
+class fsClient:
+    def __init__(self, uri, user, passwd, hadoop_bin):
+        self.uri = uri
+        self.user = user
+        self.passwd = passwd
+        self.hadoop_bin = hadoop_bin
+
+    def to_string(self):
+        return "fs_client_param {\n\t" + "uri:\"{}\"\n\tuser:\"{}\"\n\tpasswd:\"{}\"\n\thadoop_bin:\"{}\"\n".format(
+            self.uri, self.user, self.passwd, self.hadoop_bin) + "}\n"
+
+
 class TheOnePSRuntime(RuntimeBase):
     def __init__(self):
         super(TheOnePSRuntime, self).__init__()
@@ -633,7 +645,7 @@ class TheOnePSRuntime(RuntimeBase):
                             int(os.getenv("FLAGS_selected_xpus", "0"))))
         return executor
 
-    def _get_fleet_proto(self, is_server, is_sync):
+    def _get_fleet_proto(self, is_server, is_sync, **kwargs):
         def _build_merge_accessor(ctx):
             accessor = Accessor()
             accessor.accessor_class = "CommMergeAccessor"
@@ -737,6 +749,7 @@ class TheOnePSRuntime(RuntimeBase):
 
             tables = []
             for idx, (name, ctx) in enumerate(send_ctx.items()):
+                print(" wxm python test send_ctx.items-->", idx, (name, ctx))
                 if ctx.is_tensor_table() or len(ctx.origin_varnames()) < 1:
                     continue
 
@@ -833,9 +846,18 @@ class TheOnePSRuntime(RuntimeBase):
 
         server = self._get_fleet_proto(is_server=True, is_sync=is_sync)
         proto_txt = str(server)
+        fs_client = kwargs.get("fs_client") if "fs_client" in kwargs else {}
+        if "uri" in fs_client and "user" in fs_client and "passwd" in fs_client and "hadoop_bin" in fs_client:
+            # fs = fsClient("afs://yinglong.afs.baidu.com:9902", "paddle", "dltp_paddle@123", "hadoop")
+            fs = fsClient(
+                fs_client.get("uri"),
+                fs_client.get("user"),
+                fs_client.get("passwd"), fs_client.get("hadoop_bin"))
+            proto_txt = proto_txt + "\n" + fs.to_string()
         #with open('./sparse_table.prototxt') as f:
         #    proto_txt = f.read()
 
+        print("sever_proto =", proto_txt)
         debug = bool(int(os.getenv("PSERVER_DEBUG", "0")))
         if debug:
             print("server: \n{}".format(proto_txt))
