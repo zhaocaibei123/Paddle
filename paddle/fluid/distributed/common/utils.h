@@ -37,6 +37,13 @@ GetBlas() {
   return paddle::operators::math::GetBlas<paddle::platform::CPUDeviceContext,
                                           T>(cpu_ctx);
 }
+inline size_t get_sparse_shard(uint32_t shard_num, uint32_t server_num,
+                               uint64_t key) {
+  size_t remind = shard_num % server_num;
+  size_t local_shard_num =
+      remind == 0 ? shard_num / server_num : shard_num / server_num + 1;
+  return (key % shard_num) / local_shard_num;
+}
 
 template <typename T>
 inline void SQRT(int n, const T* x, T* z) {
@@ -49,6 +56,20 @@ template <typename T>
 inline void ADD(int n, const T* x, const T y, T* z) {
   for (int i = 0; i < n; ++i) {
     z[i] = x[i] + y;
+  }
+}
+
+template <typename T>
+inline void DIV(int n, const T x, const T* y, T* z) {
+  for (int i = 0; i < n; ++i) {
+    z[i] = x / y[i];
+  }
+}
+
+template <typename T>
+inline void ELE_MUL(int n, const T* x, const T* y, T* z) {
+  for (int i = 0; i < n; ++i) {
+    z[i] = x[i] * y[i];
   }
 }
 

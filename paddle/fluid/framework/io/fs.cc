@@ -61,7 +61,6 @@ static std::shared_ptr<FILE> fs_open_internal(const std::string& path,
                                               size_t buffer_size,
                                               int* err_no = 0) {
   std::shared_ptr<FILE> fp = nullptr;
-
   if (!is_pipe) {
     fp = shell_fopen(path, mode);
   } else {
@@ -263,7 +262,6 @@ std::shared_ptr<FILE> hdfs_open_write(std::string path, int* err_no,
   path = string::format_string("%s -put - \"%s\"", hdfs_command().c_str(),
                                path.c_str());
   bool is_pipe = true;
-
   if (fs_end_with_internal(path, ".gz\"")) {
     fs_add_write_converter_internal(path, is_pipe, "gzip");
   }

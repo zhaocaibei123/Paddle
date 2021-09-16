@@ -225,7 +225,7 @@ void MultiTrainer::Finalize() {
 #ifdef PADDLE_WITH_HETERPS
     for (size_t j = 0; j < places_.size(); j++) {
 #else
-    for (int j = 0; j < thread_num_; j++) {
+    for (int j = 1; j < thread_num_; j++) {
 #endif
       Scope* cur_thread_scope = workers_[j]->GetThreadScope();
       Variable* thread_var =
@@ -234,12 +234,6 @@ void MultiTrainer::Finalize() {
         continue;
       }
       LoDTensor* thread_tensor = thread_var->GetMutable<LoDTensor>();
-      //TODO: for debug zcb
-      std::stringstream ss;
-      platform::PrintVar(cur_thread_scope, need_merge_var_names_[i],
-                        need_merge_var_names_[i] , &ss);
-      std::cout << ss.str() << std::endl;
-      //debug done
 #define MergeCallback(cpp_type, proto_type)                                    \
   do {                                                                         \
     if (root_tensor->type() == proto_type) {                                   \
@@ -255,12 +249,6 @@ void MultiTrainer::Finalize() {
   } while (0)
       _ForEachDataType_(MergeCallback);
     }
-    //TODO: for debug zcb
-    std::stringstream ss;
-    platform::PrintVar(root_scope_, need_merge_var_names_[i],
-                        need_merge_var_names_[i] , &ss);
-    std::cout << ss.str() << std::endl;
-    //debug done
   }
 
 #ifdef PADDLE_WITH_HETERPS

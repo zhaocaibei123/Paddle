@@ -15,15 +15,92 @@ limitations under the License. */
 #include <ThreadPool.h>
 #include <unordered_map>
 #include <vector>
+#include "Eigen/Dense"
 #include "gtest/gtest.h"
+#include "paddle/fluid/distributed/common/thread_pool.h"
 #include "paddle/fluid/distributed/ps.pb.h"
+#include "paddle/fluid/distributed/service/brpc_ps_client.h"
 #include "paddle/fluid/distributed/table/common_table.h"
 #include "paddle/fluid/distributed/table/table.h"
-
+#include "paddle/fluid/distributed/table/tensor_accessor.h"
+#include "paddle/fluid/framework/archive.h"
 namespace paddle {
 namespace distributed {
 
 TEST(BarrierTable, Barrier) {
+  typedef AsyncRequestTask<std::shared_ptr<std::vector<float>>> DenseAsyncTask;
+  typedef thread_queue<DenseAsyncTask *, store_value> DenseAsyncTaskQueue;
+  std::unordered_map<uint32_t, std::shared_ptr<DenseAsyncTaskQueue>>
+      _push_dense_task_queue_map;
+  uint64_t merge_size = 100;
+  auto push_timer =
+      std::make_shared<CostTimer>("pslib_downpour_client_push_dense");
+  auto parse_timer =
+      std::make_shared<CostTimer>("pslib_downpour_client_push_dense_parse");
+  _push_dense_task_queue_map[0] = std::make_shared<DenseAsyncTaskQueue>();
+  std::cerr << "in barrier\n";
+  // auto dense_data = _dense_matrix_obj_pool.get();
+  int count = 100;
+  float sum = 0.0;
+  for (int i = 1; i <= 100; i++) {
+    auto dense_data = std::make_shared<std::vector<float>>();
+    auto async_task = new DenseAsyncTask(dense_data, 0, push_timer);
+    async_task->data()->resize(count);
+    float *data = async_task->data()->data();
+    float add = i * 1.0;
+    for (int j = 0; j < count; j++) data[j] = add;
+    sum += add;
+    _push_dense_task_queue_map[0]->push(std::move(async_task));
+  }
+  ThreadPool<int> async_merge_dense_threads(10);
+  int Case = 1;
+  int _async_call_num = 0;
+  while (Case--) {
+    platform::Timer timeline;
+    timeline.Start();
+    for (auto &task_queue_itr : _push_dense_task_queue_map) {
+      auto &task_queue = task_queue_itr.second;
+      auto queue_size = task_queue->size();
+      ++_async_call_num;
+      std::shared_ptr<DenseAsyncTask> task(task_queue->pop());
+      CommMergeAccessor t;
+      auto *accessor = &t;
+      //设置请求回调
+
+      auto &total_send_data_vec = *(task->data());
+      float *total_send_data = const_cast<float *>(total_send_data_vec.data());
+      size_t total_send_data_size = total_send_data_vec.size();
+      {
+        CostTimer merge_timer("pslib_downpour_client_push_dense_merge");
+        uint32_t merge_count = 0;
+        std::vector<std::future<int>> merge_status(merge_size);
+        while (!task_queue->empty() && merge_count < merge_size) {
+          auto *async_task = task_queue->pop();
+          // closure->add_timer(async_task->timer());
+          // closure->add_promise(async_task->promise());
+          merge_status[merge_count] = async_merge_dense_threads.AddTask(
+              [accessor, &total_send_data, total_send_data_size,
+               async_task]() -> int {
+                auto &tmp_task_vec = *(async_task->data());
+                const float *merge_data = tmp_task_vec.data();
+                accessor->merge(&total_send_data, &merge_data,
+                                total_send_data_size);
+#pragma optimize("", off)
+                // auto *debug_closure = closure;
+                auto *debug_task = async_task;
+                delete async_task;
+#pragma optimize("", on)
+                return 0;
+              });
+          ++merge_count;
+        }
+        for (int i = 0; i < merge_count; ++i) {
+          merge_status[i].wait();
+        }
+        for (int i = 0; i < count; i++) std::cerr << total_send_data[i] << " ";
+      }
+    }
+  }
   int emb_dim = 10;
   int trainers = 2;
   bool sync = true;

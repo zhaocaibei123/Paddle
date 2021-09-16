@@ -53,7 +53,6 @@ struct Meta {
   explicit Meta(const std::string& metapath) {
     std::ifstream file(metapath);
     std::string line;
-    int num_lines = 0;
     while (std::getline(file, line)) {
       if (StartWith(line, "#")) {
         continue;
@@ -144,8 +143,8 @@ class CommonSparseTable : public SparseTable {
                             std::vector<std::vector<float>>* values);
 
   virtual int64_t LoadFromText(
-      const std::string& valuepath, const std::string& metapath,
-      const int pserver_id, const int pserver_num, const int local_shard_num,
+      const std::string& valuepath, const int pserver_id, const int pserver_num,
+      const int local_shard_num,
       std::vector<std::shared_ptr<ValueBlock>>* blocks);
 
   virtual std::pair<int64_t, int64_t> print_table_stat();
@@ -165,6 +164,8 @@ class CommonSparseTable : public SparseTable {
                                     size_t num);
 
   virtual int32_t set_global_lr(float* lr) override;
+  virtual uint32_t get_thread_pool_index_by_shard_index(uint64_t shard_index);
+  virtual uint32_t get_thread_pool_index(uint64_t node_id);
 
   virtual int32_t pour();
   virtual int32_t flush();
@@ -180,6 +181,8 @@ class CommonSparseTable : public SparseTable {
  protected:
   const int task_pool_size_ = 11;
   std::vector<std::shared_ptr<::ThreadPool>> _shards_task_pool;
+  size_t shard_start, shard_end, server_num, shard_num_per_table, shard_num,
+      _real_local_shard_num;
 
   bool sync = false;
   int param_dim_ = 0;
