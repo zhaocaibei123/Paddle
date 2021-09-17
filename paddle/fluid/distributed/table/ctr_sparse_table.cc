@@ -14,11 +14,11 @@
 
 #include "paddle/fluid/distributed/table/ctr_sparse_table.h"
 #include <sstream>
-#include "paddle/fluid/distributed/common/afs_warpper.h"
-#include "paddle/fluid/framework/io/fs.h"
-
 #include "boost/lexical_cast.hpp"
 #include "glog/logging.h"
+#include "paddle/fluid/distributed/common/afs_warpper.h"
+#include "paddle/fluid/distributed/common/utils.h"
+#include "paddle/fluid/framework/io/fs.h"
 #include "paddle/fluid/platform/enforce.h"
 
 namespace paddle {
@@ -40,15 +40,28 @@ int32_t CtrSparseTable::initialize() {
   for (int i = 0; i < _shards_task_pool.size(); ++i) {
     _shards_task_pool[i].reset(new ::ThreadPool(1));
   }
+  server_num = _shard_num;
+  _sparse_table_shard_num = _config.shard_num();
+  _avg_local_shard_num =
+      sparse_local_shard_num(_sparse_table_shard_num, server_num);
+  _real_local_shard_num = _avg_local_shard_num;
+  if (_real_local_shard_num * (_shard_idx + 1) > _sparse_table_shard_num) {
+    _real_local_shard_num =
+        _sparse_table_shard_num - _real_local_shard_num * _shard_idx;
+    _real_local_shard_num =
+        _real_local_shard_num < 0 ? 0 : _real_local_shard_num;
+  }
+  shard_start = _shard_idx * _avg_local_shard_num;
+  shard_end = shard_start + _real_local_shard_num;
   initialize_value();
   VLOG(0) << "initalize ctrSparseTable succ";
   return 0;
 }
 
 int32_t CtrSparseTable::initialize_value() {
-  shard_values_.reserve(task_pool_size_);
+  shard_values_.reserve(_real_local_shard_num);
 
-  for (int x = 0; x < task_pool_size_; ++x) {
+  for (int x = 0; x < _real_local_shard_num; ++x) {
     auto shard = std::make_shared<CtrValueBlock>();
     shard_values_.emplace_back(shard);
   }
@@ -62,7 +75,7 @@ int32_t CtrSparseTable::load(const std::string& path,
   auto file_list = _afs_client.list(table_path);
 
   int load_param = atoi(param.c_str());
-  auto expect_shard_num = _shard_num * task_pool_size_;
+  auto expect_shard_num = _sparse_table_shard_num;
   if (file_list.size() != expect_shard_num) {
     LOG(WARNING) << "CtrSparseTable file_size:" << file_list.size()
                  << " not equal to expect_shard_num:" << expect_shard_num;
@@ -73,14 +86,14 @@ int32_t CtrSparseTable::load(const std::string& path,
     return -1;
   }
 
-  size_t file_start_idx = _shard_idx * shard_values_.size();
+  size_t file_start_idx = _shard_idx * _avg_local_shard_num;
 
   size_t feature_value_size = _value_accesor->size() / sizeof(float);
   // TODO: multi-thread
   // int thread_num = shard_values_.size() < 15 ? shard_values_.size() : 15;
   // omp_set_num_threads(thread_num);
   //#pragma omp parallel for schedule(dynamic)
-  for (size_t i = 0; i < task_pool_size_; ++i) {
+  for (size_t i = 0; i < _real_local_shard_num; ++i) {
     FsChannelConfig channel_config;
     channel_config.path = file_list[file_start_idx + i];
     channel_config.converter = _value_accesor->converter(load_param).converter;
@@ -94,6 +107,7 @@ int32_t CtrSparseTable::load(const std::string& path,
       is_read_failed = false;
       err_no = 0;
       std::string line_data;
+      VLOG(1) << "wxm _afs_client open " << channel_config.path << std::endl;
       auto read_channel = _afs_client.open_r(channel_config, 0, &err_no);
       char* end = NULL;
       auto& shard = shard_values_[i];
@@ -129,7 +143,7 @@ int32_t CtrSparseTable::load(const std::string& path,
   }
   LOG(INFO) << "CtrSparseTable load success, path from "
             << file_list[file_start_idx] << " to "
-            << file_list[file_start_idx + task_pool_size_];
+            << file_list[file_start_idx + shard_end - 1];
   return 0;
 }
 
@@ -139,7 +153,7 @@ int32_t CtrSparseTable::load_local_fs(const std::string& path,
   auto file_list = paddle::framework::localfs_list(table_path);
 
   int load_param = atoi(param.c_str());
-  auto expect_shard_num = _shard_num * task_pool_size_;
+  auto expect_shard_num = _sparse_table_shard_num;
   if (file_list.size() != expect_shard_num) {
     LOG(WARNING) << "CtrSparseTable file_size:" << file_list.size()
                  << " not equal to expect_shard_num:" << expect_shard_num;
@@ -150,13 +164,13 @@ int32_t CtrSparseTable::load_local_fs(const std::string& path,
     return -1;
   }
 
-  size_t file_start_idx = _shard_idx * shard_values_.size();
+  size_t file_start_idx = _shard_idx * _avg_local_shard_num;
 
   size_t feature_value_size = _value_accesor->size() / sizeof(float);
   // int thread_num = shard_values_.size() < 15 ? shard_values_.size() : 15;
   // omp_set_num_threads(thread_num);
   //#pragma omp parallel for schedule(dynamic)
-  for (size_t i = 0; i < task_pool_size_; ++i) {
+  for (size_t i = 0; i < _real_local_shard_num; ++i) {
     bool is_read_failed = false;
     int retry_num = 0;
     int err_no = 0;
@@ -200,13 +214,14 @@ int32_t CtrSparseTable::load_local_fs(const std::string& path,
   }
   LOG(INFO) << "CtrSparseTable load success, path from "
             << file_list[file_start_idx] << " to "
-            << file_list[file_start_idx + task_pool_size_];
+            << file_list[file_start_idx + shard_end - 1];
   return 0;
 }
 
 int32_t CtrSparseTable::save(const std::string& dirname,
                              const std::string& param) {
   //                                const std::string& prefix) {
+  std::cout << "in CtrSparseTable -- save";
   int save_param =
       atoi(param.c_str());  // checkpoint:0  xbox delta:1  xbox base:2
   std::string table_path = table_dir(dirname);
@@ -214,18 +229,20 @@ int32_t CtrSparseTable::save(const std::string& dirname,
       "%s/part-%03d-*", table_path.c_str(), _shard_idx));
   int thread_num = shard_values_.size() < 20 ? shard_values_.size() : 20;
   std::atomic<uint32_t> feasign_size_all{0};
-
+  size_t file_start_idx = _avg_local_shard_num * _shard_idx;
   // TODO: openmp
   // omp_set_num_threads(thread_num);
   //#pragma omp parallel for schedule(dynamic)
-  for (size_t i = 0; i < shard_values_.size(); ++i) {
+  for (size_t i = 0; i < _real_local_shard_num; ++i) {
     FsChannelConfig channel_config;
     if (_config.compress_in_save() && (save_param == 0 || save_param == 3)) {
       channel_config.path = paddle::string::format_string(
-          "%s/part-%03d-%05d.gz", table_path.c_str(), _shard_idx, i);
+          "%s/part-%03d-%05d.gz", table_path.c_str(), _shard_idx,
+          file_start_idx + i);
     } else {
-      channel_config.path = paddle::string::format_string(
-          "%s/part-%03d-%05d", table_path.c_str(), _shard_idx, i);
+      channel_config.path =
+          paddle::string::format_string("%s/part-%03d-%05d", table_path.c_str(),
+                                        _shard_idx, file_start_idx + i);
     }
     channel_config.converter = _value_accesor->converter(save_param).converter;
     channel_config.deconverter =
@@ -298,12 +315,13 @@ int32_t CtrSparseTable::save_local_fs(const std::string& dirname,
       atoi(param.c_str());  // checkpoint:0  xbox delta:1  xbox base:2
   std::string table_path = table_dir(dirname);
   int feasign_cnt = 0;
+  size_t file_start_idx = _avg_local_shard_num * _shard_idx;
   for (size_t i = 0; i < shard_values_.size(); ++i) {
     feasign_cnt = 0;
     auto& shard = shard_values_[i];
     std::string file_name = paddle::string::format_string(
         "%s/part-%s-%03d-%05d", table_path.c_str(), prefix.c_str(), _shard_idx,
-        i);
+        i + file_start_idx);
     std::ofstream os;
     os.open(file_name);
     for (auto& table : shard->values_) {
@@ -341,55 +359,65 @@ std::pair<int64_t, int64_t> CtrSparseTable::print_table_stat() {
 
 int32_t CtrSparseTable::pull_sparse(float* pull_values,
                                     const PullSparseValue& pull_value) {
-  auto shard_num = task_pool_size_;
-  std::vector<std::future<int>> tasks(shard_num);
+  std::vector<std::future<int>> tasks(_real_local_shard_num);
 
   size_t value_size = _value_accesor->size() / sizeof(float);
   size_t mf_value_size = _value_accesor->mf_size() / sizeof(float);
   size_t select_value_size = _value_accesor->select_size() / sizeof(float);
   // std::atomic<uint32_t> missed_keys{0};
+  std::vector<std::vector<std::pair<uint64_t, int>>> task_keys(
+      _real_local_shard_num);
+  size_t num = pull_value.numel_;
+  for (size_t i = 0; i < num; ++i) {
+    int shard_id = (pull_value.feasigns_[i] % _sparse_table_shard_num) %
+                   _avg_local_shard_num;
+    task_keys[shard_id].push_back({pull_value.feasigns_[i], i});
+  }
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
+    tasks[shard_id] =
+        _shards_task_pool[shard_id % _shards_task_pool.size()]->enqueue(
+            [this, shard_id, &task_keys, value_size, pull_values, mf_value_size,
+             select_value_size]() -> int {
+              auto& local_shard = shard_values_[shard_id];
+              float data_buffer[value_size];
+              float* data_buffer_ptr = data_buffer;
 
-  for (int shard_id = 0; shard_id < shard_num; ++shard_id) {
-    tasks[shard_id] = _shards_task_pool[shard_id]->enqueue(
-        [this, shard_id, shard_num, &pull_value, &pull_values, value_size,
-         mf_value_size, select_value_size]() -> int {
-          auto& local_shard = shard_values_[shard_id];
-          float data_buffer[value_size];
-          float* data_buffer_ptr = data_buffer;
-
-          std::vector<int> offsets;
-          pull_value.Fission(shard_id, shard_num, &offsets);
-          for (auto& offset : offsets) {
-            uint64_t key = pull_value.feasigns_[offset];
-            auto itr = local_shard->Find(key);
-            size_t data_size = value_size - mf_value_size;
-            if (itr == local_shard->end()) {
-              //++missed_keys;
-              // TODO: FLAGS
-              if (FLAGS_pslib_create_value_when_push) {
-                memset(data_buffer, 0, sizeof(float) * data_size);
-              } else {
-                auto* feature_value = local_shard->Init(key);
-                feature_value->resize(data_size);
-                float* data_ptr = const_cast<float*>(feature_value->data());
-                _value_accesor->create(&data_buffer_ptr, 1);
-                memcpy(data_ptr, data_buffer_ptr, data_size * sizeof(float));
+              // std::vector<int> offsets;
+              // pull_value.Fission(shard_id, shard_num, &offsets);
+              auto& keys = task_keys[shard_id];
+              for (size_t i = 0; i < keys.size(); i++) {
+                uint64_t key = keys[i].first;
+                auto itr = local_shard->Find(key);
+                size_t data_size = value_size - mf_value_size;
+                if (itr == local_shard->end()) {
+                  //++missed_keys;
+                  // TODO: FLAGS
+                  if (FLAGS_pslib_create_value_when_push) {
+                    memset(data_buffer, 0, sizeof(float) * data_size);
+                  } else {
+                    auto* feature_value = local_shard->Init(key);
+                    feature_value->resize(data_size);
+                    float* data_ptr = const_cast<float*>(feature_value->data());
+                    _value_accesor->create(&data_buffer_ptr, 1);
+                    memcpy(data_ptr, data_buffer_ptr,
+                           data_size * sizeof(float));
+                  }
+                } else {
+                  data_size = itr->second->size();
+                  memcpy(data_buffer_ptr, itr->second->data(),
+                         data_size * sizeof(float));
+                }
+                for (int mf_idx = data_size; mf_idx < value_size; ++mf_idx) {
+                  data_buffer[mf_idx] = 0.0;
+                }
+                auto offset = keys[i].second;
+                float* select_data = pull_values + select_value_size * offset;
+                _value_accesor->select(&select_data,
+                                       (const float**)&data_buffer_ptr, 1);
               }
-            } else {
-              data_size = itr->second->size();
-              memcpy(data_buffer_ptr, itr->second->data(),
-                     data_size * sizeof(float));
-            }
-            for (int mf_idx = data_size; mf_idx < value_size; ++mf_idx) {
-              data_buffer[mf_idx] = 0.0;
-            }
-            float* select_data = pull_values + select_value_size * offset;
-            _value_accesor->select(&select_data,
-                                   (const float**)&data_buffer_ptr, 1);
-          }
-          return 0;
+              return 0;
 
-        });
+            });
   }
 
   for (size_t shard_id = 0; shard_id < tasks.size(); ++shard_id) {
@@ -416,32 +444,43 @@ int32_t CtrSparseTable::pull_sparse_ptr(char** pull_values,
 
 int32_t CtrSparseTable::push_sparse(const uint64_t* keys, const float* values,
                                     size_t num) {
-  std::vector<std::vector<uint64_t>> offset_bucket;
-  offset_bucket.resize(task_pool_size_);
+  // std::vector<std::vector<uint64_t>> offset_bucket;
+  // offset_bucket.resize(task_pool_size_);
 
-  for (int x = 0; x < num; ++x) {
-    auto y = keys[x] % task_pool_size_;
-    offset_bucket[y].push_back(x);
+  // for (int x = 0; x < num; ++x) {
+  //   auto y = keys[x] % task_pool_size_;
+  //   offset_bucket[y].push_back(x);
+  // }
+
+  std::vector<std::future<int>> tasks(_real_local_shard_num);
+  std::vector<std::vector<std::pair<uint64_t, int>>> task_keys(
+      _real_local_shard_num);
+  for (size_t i = 0; i < num; ++i) {
+    int shard_id = (keys[i] % _sparse_table_shard_num) % _avg_local_shard_num;
+    task_keys[shard_id].push_back({keys[i], i});
   }
-
   size_t value_col = _value_accesor->size() / sizeof(float);
   size_t mf_value_col = _value_accesor->mf_size() / sizeof(float);
   size_t update_value_col = _value_accesor->update_size() / sizeof(float);
 
-  std::vector<std::future<int>> tasks(task_pool_size_);
+  for (size_t shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
+    tasks[shard_id] = _shards_task_pool[shard_id % task_pool_size_]->enqueue(
+        [this, shard_id, value_col, mf_value_col, update_value_col, values,
+         &task_keys]() -> int {
+          // auto& offsets = offset_bucket[shard_id];
+          // auto& local_shard = shard_values_[shard_id];
+          // float data_buffer[value_col];
+          // float* data_buffer_ptr = data_buffer;
 
-  for (int shard_id = 0; shard_id < task_pool_size_; ++shard_id) {
-    tasks[shard_id] = _shards_task_pool[shard_id]->enqueue(
-        [this, shard_id, &keys, &values, num, &offset_bucket, value_col,
-         mf_value_col, update_value_col]() -> int {
-          auto& offsets = offset_bucket[shard_id];
+          auto& keys = task_keys[shard_id];
           auto& local_shard = shard_values_[shard_id];
           float data_buffer[value_col];
           float* data_buffer_ptr = data_buffer;
-
-          for (auto& offset : offsets) {
-            uint64_t key = keys[offset];
-            const float* update_data = values + offset * update_value_col;
+          for (int i = 0; i < keys.size(); ++i) {
+            uint64_t key = keys[i].first;
+            uint64_t push_data_idx = keys[i].second;
+            const float* update_data =
+                values + push_data_idx * update_value_col;
             auto itr = local_shard->Find(key);
             if (itr == local_shard->end()) {
               VLOG(0) << "zcb debug table push_sparse: " << key << "not found!";
@@ -457,7 +496,7 @@ int32_t CtrSparseTable::push_sparse(const uint64_t* keys, const float* values,
                      value_size * sizeof(float));
               itr = local_shard->Find(key);
             } else {
-              VLOG(1) << "zcb debug table push_sparse: " << key << " found!" ;
+              VLOG(1) << "zcb debug table push_sparse: " << key << " found!";
             }
 
             auto* feature_value = itr->second;
@@ -512,32 +551,34 @@ int32_t CtrSparseTable::push_sparse(const uint64_t* keys, const float** values,
 
 int32_t CtrSparseTable::_push_sparse(const uint64_t* keys, const float** values,
                                      size_t num) {
-  std::vector<std::vector<uint64_t>> offset_bucket;
-  offset_bucket.resize(task_pool_size_);
-
-  for (int x = 0; x < num; ++x) {
-    auto y = keys[x] % task_pool_size_;
-    offset_bucket[y].push_back(x);
+  std::vector<std::future<int>> tasks(_real_local_shard_num);
+  std::vector<std::vector<std::pair<uint64_t, int>>> task_keys(
+      _real_local_shard_num);
+  for (size_t i = 0; i < num; ++i) {
+    int shard_id = (keys[i] % _sparse_table_shard_num) % _avg_local_shard_num;
+    task_keys[shard_id].push_back({keys[i], i});
   }
 
   size_t value_col = _value_accesor->size() / sizeof(float);
   size_t mf_value_col = _value_accesor->mf_size() / sizeof(float);
   size_t update_value_col = _value_accesor->update_size() / sizeof(float);
 
-  std::vector<std::future<int>> tasks(task_pool_size_);
-
-  for (int shard_id = 0; shard_id < task_pool_size_; ++shard_id) {
-    tasks[shard_id] = _shards_task_pool[shard_id]->enqueue(
-        [this, shard_id, &keys, &values, num, &offset_bucket, value_col,
-         mf_value_col, update_value_col]() -> int {
-          auto& offsets = offset_bucket[shard_id];
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
+    tasks[shard_id] = _shards_task_pool[shard_id % task_pool_size_]->enqueue(
+        [this, shard_id, value_col, mf_value_col, update_value_col, values,
+         &task_keys]() -> int {
+          auto& keys = task_keys[shard_id];
           auto& local_shard = shard_values_[shard_id];
           float data_buffer[value_col];
           float* data_buffer_ptr = data_buffer;
 
-          for (auto& offset : offsets) {
-            uint64_t key = keys[offset];
-            const float* update_data = values[offset];
+          // for (auto& offset : offsets) {
+          //   uint64_t key = keys[offset];
+          //   const float* update_data = values[offset];
+          for (int i = 0; i < keys.size(); ++i) {
+            uint64_t key = keys[i].first;
+            uint64_t push_data_idx = keys[i].second;
+            const float* update_data = values[push_data_idx];
             auto itr = local_shard->Find(key);
             if (itr == local_shard->end()) {
               if (FLAGS_pslib_enable_create_feasign_randomly &&
@@ -583,7 +624,7 @@ int32_t CtrSparseTable::flush() { return 0; }
 // TODO: no need param
 int32_t CtrSparseTable::shrink(const std::string& param) {
   // TODO implement with multi-thread
-  for (int shard_id = 0; shard_id < task_pool_size_; ++shard_id) {
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
     // shrink
     auto& shard = shard_values_[shard_id];
     for (auto& table : shard->values_) {

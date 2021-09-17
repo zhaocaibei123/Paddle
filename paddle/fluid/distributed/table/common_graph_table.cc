@@ -585,11 +585,18 @@ int32_t GraphTable::initialize() {
           << _shard_idx;
   shard_num_per_table = sparse_local_shard_num(shard_num, server_num);
   shard_start = _shard_idx * shard_num_per_table;
-  shard_end = shard_start + shard_num_per_table;
+  _real_local_shard_num = shard_num_per_table;
+  if (_real_local_shard_num * (_shard_idx + 1) > shard_num) {
+    _real_local_shard_num = shard_num - _shard_idx * shard_num_per_table;
+    _real_local_shard_num =
+        _real_local_shard_num < 0 ? 0 : _real_local_shard_num;
+  }
+  shard_end = shard_start + _real_local_shard_num;
   VLOG(0) << "in init graph table shard idx = " << _shard_idx << " shard_start "
           << shard_start << " shard_end " << shard_end;
   // shards.resize(shard_num_per_table);
-  shards = std::vector<GraphShard>(shard_num_per_table, GraphShard(shard_num));
+  shards =
+      std::vector<GraphShard>(_real_local_shard_num, GraphShard(shard_num));
   return 0;
 }
 }  // namespace distributed

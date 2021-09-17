@@ -179,7 +179,6 @@ std::shared_ptr<FILE> shell_popen(const std::string& cmd,
   VLOG(3) << "Opening pipe[" << cmd << "] with mode[" << mode << "]";
 
   std::string real_cmd = "set -o pipefail; " + cmd;
-
   int pipe_fds[2];
   if (pipe(pipe_fds) != 0) {
     *err_no = -1;

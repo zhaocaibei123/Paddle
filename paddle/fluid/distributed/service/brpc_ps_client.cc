@@ -17,6 +17,7 @@
 #include <string>
 
 #include "paddle/fluid/distributed/common/thread_pool.h"
+#include "paddle/fluid/distributed/common/utils.h"
 #include "paddle/fluid/distributed/service/brpc_ps_client.h"
 #include "paddle/fluid/framework/archive.h"
 
@@ -72,14 +73,6 @@ class Variable;
 namespace paddle {
 namespace distributed {
 
-inline size_t get_sparse_shard(uint32_t shard_num, uint32_t server_num,
-                               uint64_t key) {
-  size_t remind = shard_num % server_num;
-  size_t local_shard_num =
-      remind == 0 ? shard_num / server_num : shard_num / server_num + 1;
-  return (key % shard_num) / local_shard_num;
-}
-
 void DownpourPsClientService::service(
     ::google::protobuf::RpcController *controller,
     const PsRequestMessage *request, PsResponseMessage *response,
@@ -127,6 +120,12 @@ int32_t BrpcPsClient::create_client2client_connection(
   options.max_retry = max_retry;
 
   std::vector<PSHost> client_list = _env->get_ps_clients();
+  VLOG(1) << "BrpcPsClient::create_c2c_connection client_list size: "
+          << client_list.size();
+  for (auto cc : client_list) {
+    VLOG(1) << "BrpcPsClient::create_c2c_connection client_list: "
+            << cc.to_string();
+  }
   _client_channels.resize(client_list.size());
   std::ostringstream os;
   std::string server_ip_port;
@@ -193,6 +192,12 @@ int32_t BrpcPsClient::initialize() {
   }
   // 启动client探听接口, 并相互建立连接
   start_client_service();
+
+  // for global shuffle
+  // TODO: check zcb
+  // TODO: param configure
+  // cannot get all clients, only self
+  // create_client2client_connection(500000, 10000, 3);
 
   // 异步push 请求队列初始化
   const auto &worker_param = _config.worker_param().downpour_worker_param();
@@ -508,8 +513,17 @@ std::future<int32_t> BrpcPsClient::push_sparse_param(
   std::vector<std::vector<const float *>> value_ptrs;
   ids.resize(request_call_num);
   value_ptrs.resize(request_call_num);
+  const auto &server_param = _config.server_param().downpour_server_param();
+  uint64_t shard_num = FLAGS_pslib_sparse_table_shard_num;
+  for (int i = 0; i < server_param.downpour_table_param_size(); ++i) {
+    const auto &table_param = server_param.downpour_table_param(i);
+    if (table_param.table_id() == table_id) {
+      shard_num = table_param.shard_num();
+      break;
+    }
+  }
   for (size_t i = 0; i < num; ++i) {
-    size_t pserver_idx = keys[i] % request_call_num;
+    size_t pserver_idx = get_sparse_shard(shard_num, request_call_num, keys[i]);
     ids[pserver_idx].push_back(keys[i]);
     value_ptrs[pserver_idx].push_back(update_values[i]);
   }
@@ -545,6 +559,7 @@ std::future<int32_t> BrpcPsClient::push_sparse_param(
 std::future<int32_t> BrpcPsClient::pull_dense(Region *regions,
                                               size_t region_num,
                                               size_t table_id) {
+  std::cout << "zcb pull dense\n";
   auto *accessor = table_accessor(table_id);
   size_t request_call_num = _server_channels.size();
   uint32_t num_per_shard =
@@ -707,9 +722,17 @@ std::future<int32_t> BrpcPsClient::push_sparse_raw_gradient(
   std::vector<std::vector<const float *>> value_ptrs;
   ids.resize(request_call_num);
   value_ptrs.resize(request_call_num);
-
+  const auto &server_param = _config.server_param().downpour_server_param();
+  uint64_t shard_num = FLAGS_pslib_sparse_table_shard_num;
+  for (int i = 0; i < server_param.downpour_table_param_size(); ++i) {
+    const auto &table_param = server_param.downpour_table_param(i);
+    if (table_param.table_id() == table_id) {
+      shard_num = table_param.shard_num();
+      break;
+    }
+  }
   for (size_t i = 0; i < num; ++i) {
-    size_t pserver_idx = keys[i] % request_call_num;
+    size_t pserver_idx = get_sparse_shard(shard_num, request_call_num, keys[i]);
     ids[pserver_idx].push_back(keys[i]);
     value_ptrs[pserver_idx].push_back(update_values[i]);
   }
@@ -818,8 +841,17 @@ std::future<int32_t> BrpcPsClient::pull_sparse(float **select_values,
       std::vector<std::vector<std::pair<uint64_t, float *>>>>();
   shard_sorted_kvs->resize(request_call_num);
 
+  const auto &server_param = _config.server_param().downpour_server_param();
+  uint64_t shard_num = FLAGS_pslib_sparse_table_shard_num;
+  for (int i = 0; i < server_param.downpour_table_param_size(); ++i) {
+    const auto &table_param = server_param.downpour_table_param(i);
+    if (table_param.table_id() == table_id) {
+      shard_num = table_param.shard_num();
+      break;
+    }
+  }
   for (size_t i = 0; i < num; ++i) {
-    size_t shard_id = keys[i] % request_call_num;
+    size_t shard_id = get_sparse_shard(shard_num, request_call_num, keys[i]);
     shard_sorted_kvs->at(shard_id).push_back({keys[i], select_values[i]});
   }
 
@@ -1074,12 +1106,11 @@ std::future<int32_t> BrpcPsClient::push_sparse(size_t table_id,
     }
   }
   for (size_t i = 0; i < num; ++i) {
-    // size_t shard_id = get_sparse_shard(
-    //    shard_num, request_call_num, keys[i]);
-    size_t shard_id = keys[i] % request_call_num;
+    size_t shard_id = get_sparse_shard(shard_num, request_call_num, keys[i]);
+    // size_t shard_id = keys[i] % request_call_num;
     shard_sorted_kv_list[shard_id].push_back({keys[i], update_values[i]});
-    // std::cout << "zcb client push_sparse(): " << keys[i] << " -> " <<
-    // shard_id << "\n";
+    VLOG(1) << "zcb client push_sparse(): " << keys[i] << " -> " << shard_id
+            << "\n";
   }
   auto sparse_task_data = _sparse_task_pool.get();
   sparse_task_data->shared_data.resize(request_call_num);
@@ -1545,56 +1576,54 @@ void BrpcPsClient::push_dense_task_consume() {
           mat *= (1.0 / (merge_count + 1));
         }
 
-      VLOG(1) << "BrpcPsClient::push_dense_task_consume after merge "
-                 "total_send_data[0]"
-              << total_send_data[0] << " total_send_data[-2]"
-              << total_send_data[total_send_data_size - 2]
-              << " total_send_data[-1]"
-              << total_send_data[total_send_data_size - 1] << " merge_count "
-              << merge_count;
-
+        VLOG(1) << "BrpcPsClient::push_dense_task_consume after merge "
+                   "total_send_data[0]"
+                << total_send_data[0] << " total_send_data[-2]"
+                << total_send_data[total_send_data_size - 2]
+                << " total_send_data[-1]"
+                << total_send_data[total_send_data_size - 1] << " merge_count "
+                << merge_count;
       }
       push_dense_raw_gradient(task, total_send_data, total_send_data_size,
-                                closure);
+                              closure);
     }
-      auto wait_ms =
-          FLAGS_pslib_async_push_dense_interval_ms - (timeline.ElapsedMS());
-      if (wait_ms > 0) {
-        usleep(wait_ms * 1000);
-      }
+    auto wait_ms =
+        FLAGS_pslib_async_push_dense_interval_ms - (timeline.ElapsedMS());
+    if (wait_ms > 0) {
+      usleep(wait_ms * 1000);
     }
   }
+}
 
-  void BrpcPsClient::push_dense_raw_gradient(
-      std::shared_ptr<DenseAsyncTask> & task, float *total_send_data,
-      size_t total_send_data_size, DownpourBrpcClosure *closure) {
-    auto *accessor = table_accessor(task->table_id());
-    size_t request_call_num = _server_channels.size();
-    //将数据拷贝到请求buffer区
-    auto timer =
-        std::make_shared<CostTimer>("pslib_downpour_client_push_dense_rpc");
-    closure->add_timer(timer);
-    uint32_t num_per_shard =
-        dense_dim_per_shard(accessor->fea_dim(), request_call_num);
-    for (size_t i = 0; i < request_call_num; ++i) {
-      closure->request(i)->set_cmd_id(PS_PUSH_DENSE_TABLE);
-      closure->request(i)->set_table_id(task->table_id());
-      closure->request(i)->set_client_id(_client_id);
-      auto *push_data = closure->request(i)->mutable_data();
-      push_data->clear();
-      push_data->resize(sizeof(uint32_t) + num_per_shard * sizeof(float));
-      char *push_data_ptr = const_cast<char *>(push_data->data());
-      memcpy(push_data_ptr, &num_per_shard, sizeof(uint32_t));
-      memcpy(push_data_ptr + sizeof(uint32_t),
-             total_send_data + i * num_per_shard,
-             num_per_shard * sizeof(float));
-      closure->cntl(i)->set_request_compress_type(
-          (brpc::CompressType)FLAGS_pserver_communicate_compress_type);
-      PsService_Stub rpc_stub(get_dense_channel(i));
-      rpc_stub.service(closure->cntl(i), closure->request(i),
-                       closure->response(i), closure);
-    }
+void BrpcPsClient::push_dense_raw_gradient(
+    std::shared_ptr<DenseAsyncTask> &task, float *total_send_data,
+    size_t total_send_data_size, DownpourBrpcClosure *closure) {
+  auto *accessor = table_accessor(task->table_id());
+  size_t request_call_num = _server_channels.size();
+  //将数据拷贝到请求buffer区
+  auto timer =
+      std::make_shared<CostTimer>("pslib_downpour_client_push_dense_rpc");
+  closure->add_timer(timer);
+  uint32_t num_per_shard =
+      dense_dim_per_shard(accessor->fea_dim(), request_call_num);
+  for (size_t i = 0; i < request_call_num; ++i) {
+    closure->request(i)->set_cmd_id(PS_PUSH_DENSE_TABLE);
+    closure->request(i)->set_table_id(task->table_id());
+    closure->request(i)->set_client_id(_client_id);
+    auto *push_data = closure->request(i)->mutable_data();
+    push_data->clear();
+    push_data->resize(sizeof(uint32_t) + num_per_shard * sizeof(float));
+    char *push_data_ptr = const_cast<char *>(push_data->data());
+    memcpy(push_data_ptr, &num_per_shard, sizeof(uint32_t));
+    memcpy(push_data_ptr + sizeof(uint32_t),
+           total_send_data + i * num_per_shard, num_per_shard * sizeof(float));
+    closure->cntl(i)->set_request_compress_type(
+        (brpc::CompressType)FLAGS_pserver_communicate_compress_type);
+    PsService_Stub rpc_stub(get_dense_channel(i));
+    rpc_stub.service(closure->cntl(i), closure->request(i),
+                     closure->response(i), closure);
   }
+}
 
 }  // namespace distributed
 }  // namespace paddle

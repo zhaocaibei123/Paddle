@@ -124,7 +124,8 @@ class GraphTable : public SparseTable {
 
  protected:
   std::vector<GraphShard> shards;
-  size_t shard_start, shard_end, server_num, shard_num_per_table, shard_num;
+  size_t shard_start, shard_end, server_num, shard_num_per_table, shard_num,
+      _real_local_shard_num;
   const int task_pool_size_ = 24;
   const int random_sample_nodes_ranges = 3;
 

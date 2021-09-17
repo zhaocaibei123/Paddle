@@ -17,6 +17,7 @@
 
 #include "boost/lexical_cast.hpp"
 #include "glog/logging.h"
+#include "paddle/fluid/distributed/common/utils.h"
 #include "paddle/fluid/platform/enforce.h"
 
 namespace paddle {
@@ -27,7 +28,10 @@ class ValueBlock;
 
 namespace paddle {
 namespace distributed {
-
+uint32_t CommonSparseTable::get_thread_pool_index_by_shard_index(
+    uint64_t shard_index) {
+  return shard_index % shard_num_per_table % task_pool_size_;
+}
 void CommonSparseTable::ProcessALine(const std::vector<std::string>& columns,
                                      const Meta& meta, const int64_t id,
                                      std::vector<std::vector<float>>* values) {
@@ -120,46 +124,62 @@ int64_t CommonSparseTable::SaveValueToText(std::ostream* os,
 }
 
 int64_t CommonSparseTable::LoadFromText(
-    const std::string& valuepath, const std::string& metapath,
-    const int pserver_id, const int pserver_num, const int local_shard_num,
+    const std::string& valuepath, const int pserver_id, const int pserver_num,
+    const int local_shard_num,
     std::vector<std::shared_ptr<ValueBlock>>* blocks) {
+  std::string metapath =
+      string::Sprintf("%s/block%d.meta", valuepath, shard_start);
   Meta meta = Meta(metapath);
 
   int num_lines = 0;
-  std::ifstream file(valuepath);
-  std::string line;
+  for (size_t i = shard_start; i < shard_end; i++) {
+    std::string path = string::Sprintf("%s/block%d.txt", valuepath, i);
+    std::ifstream file(path);
+    std::string line;
 
-  while (std::getline(file, line)) {
-    auto values = paddle::string::split_string<std::string>(line, "\t");
-    auto id = lexical_cast<uint64_t>(values[0]);
+    while (std::getline(file, line)) {
+      auto values = paddle::string::split_string<std::string>(line, "\t");
+      auto id = lexical_cast<uint64_t>(values[0]);
 
-    if (id % pserver_num != pserver_id) {
-      VLOG(3) << "will not load " << values[0] << " from " << valuepath
-              << ", please check id distribution";
-      continue;
-    }
+      // if (id % pserver_num != pserver_id) {
+      //   VLOG(3) << "will not load " << values[0] << " from " << valuepath
+      //           << ", please check id distribution";
+      //   continue;
+      // }
+      size_t shard_id = id % shard_num;
+      if (shard_id >= shard_end || shard_id < shard_start) {
+        VLOG(3) << "will not load " << values[0] << " from " << valuepath
+                << ", please check id distribution";
+        continue;
+      }
+      // if (id % pserver_num != pserver_id) {
+      //   VLOG(3) << "will not load " << values[0] << " from " << valuepath
+      //           << ", please check id distribution";
+      //   continue;
+      // }
+      // auto shard_id = id % local_shard_num;
+      shard_id -= shard_start;
+      auto block = blocks->at(shard_id);
 
-    auto shard_id = id % local_shard_num;
-    auto block = blocks->at(shard_id);
+      std::vector<std::vector<float>> kvalues;
+      ProcessALine(values, meta, id, &kvalues);
 
-    std::vector<std::vector<float>> kvalues;
-    ProcessALine(values, meta, id, &kvalues);
+      block->Init(id, false);
 
-    block->Init(id, false);
+      VALUE* value_instant = block->GetValue(id);
 
-    VALUE* value_instant = block->GetValue(id);
+      if (values.size() == 5) {
+        value_instant->count_ = lexical_cast<int>(values[1]);
+        value_instant->unseen_days_ = lexical_cast<int>(values[2]);
+        value_instant->is_entry_ =
+            static_cast<bool>(lexical_cast<int>(values[3]));
+      }
 
-    if (values.size() == 5) {
-      value_instant->count_ = lexical_cast<int>(values[1]);
-      value_instant->unseen_days_ = lexical_cast<int>(values[2]);
-      value_instant->is_entry_ =
-          static_cast<bool>(lexical_cast<int>(values[3]));
-    }
-
-    std::vector<float*> block_values = block->Get(id, meta.names, meta.dims);
-    auto blas = GetBlas<float>();
-    for (int x = 0; x < meta.names.size(); ++x) {
-      blas.VCOPY(meta.dims[x], kvalues[x].data(), block_values[x]);
+      std::vector<float*> block_values = block->Get(id, meta.names, meta.dims);
+      auto blas = GetBlas<float>();
+      for (int x = 0; x < meta.names.size(); ++x) {
+        blas.VCOPY(meta.dims[x], kvalues[x].data(), block_values[x]);
+      }
     }
   }
 
@@ -179,7 +199,18 @@ int32_t CommonSparseTable::initialize() {
 
   auto common = _config.common();
   int size = static_cast<int>(common.params().size());
+  server_num = _shard_num;
+  shard_num = _config.shard_num();
+  shard_num_per_table = sparse_local_shard_num(shard_num, server_num);
+  _real_local_shard_num = shard_num_per_table;
+  if (_real_local_shard_num * (_shard_idx + 1) > shard_num) {
+    _real_local_shard_num = shard_num - _real_local_shard_num * _shard_idx;
+    _real_local_shard_num =
+        _real_local_shard_num < 0 ? 0 : _real_local_shard_num;
+  }
+  shard_start = _shard_idx * shard_num_per_table;
 
+  shard_end = shard_start + _real_local_shard_num;
   size_t offset = 0;
   for (int x = 0; x < size; ++x) {
     auto& varname = common.params()[x];
@@ -209,9 +240,9 @@ int32_t CommonSparseTable::initialize_recorder() { return 0; }
 
 int32_t CommonSparseTable::initialize_value() {
   auto common = _config.common();
-  shard_values_.reserve(task_pool_size_);
+  shard_values_.reserve(_real_local_shard_num);
 
-  for (int x = 0; x < task_pool_size_; ++x) {
+  for (int x = 0; x < _real_local_shard_num; ++x) {
     auto shard = std::make_shared<ValueBlock>(
         value_names_, value_dims_, value_offsets_, value_idx_,
         initializer_attrs_, common.entry());
@@ -223,9 +254,9 @@ int32_t CommonSparseTable::initialize_value() {
   std::vector<uint64_t> feasigns;
 
   for (size_t x = 0; x < accessor.fea_dim(); ++x) {
-    if (x % _shard_num == _shard_idx) {
-      feasigns.push_back(x);
-    }
+    size_t shard_id = x % shard_num;
+    if (shard_id >= shard_end || shard_id < shard_start) continue;
+    feasigns.push_back(x);
   }
 
   VLOG(3) << "has " << feasigns.size() << " ids need to be pre inited";
@@ -282,13 +313,16 @@ int32_t CommonSparseTable::load(const std::string& path,
                                 const std::string& param) {
   auto begin = GetCurrentUS();
   rwlock_->WRLock();
-  LoadFromText(path, param, _shard_idx, _shard_num, task_pool_size_,
+  auto varname = _config.common().table_name();
+  std::string cur_path = path;
+  if (path[path.size() - 1] != '/') cur_path += "/";
+  cur_path += varname;
+  LoadFromText(cur_path, _shard_idx, _shard_num, task_pool_size_,
                &shard_values_);
   rwlock_->UNLock();
   auto end = GetCurrentUS();
 
-  auto varname = _config.common().table_name();
-  VLOG(0) << "load " << varname << " with value: " << path
+  VLOG(0) << "load " << varname << " with value: " << cur_path
           << " , meta: " << param
           << " using: " << std::to_string((end - begin) / 1e+6) << " seconds";
 
@@ -303,39 +337,33 @@ int32_t CommonSparseTable::save(const std::string& dirname,
   VLOG(3) << "sparse table save: " << dirname << " mode: " << mode;
 
   auto varname = _config.common().table_name();
-  std::string var_store =
-      string::Sprintf("%s/%s%s", dirname, varname, PSERVER_SAVE_SUFFIX);
+  std::string var_store = dirname;
+  if (dirname[dirname.size() - 1] != '/') var_store += "/";
+  var_store += varname;
   MkDirRecursively(var_store.c_str());
 
   VLOG(3) << "save " << varname << " in dir: " << var_store << " begin";
   std::vector<std::string> params(_config.common().params().begin(),
                                   _config.common().params().end());
-
-  std::string shard_var_pre =
-      string::Sprintf("%s.block%d", varname, _shard_idx);
-
-  std::string value_ = string::Sprintf("%s/%s.txt", var_store, shard_var_pre);
-
-  std::unique_ptr<std::ofstream> vs(new std::ofstream(value_));
-
   int64_t total_ins = 0;
-  for (int shard_id = 0; shard_id < task_pool_size_; ++shard_id) {
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
     // save values
+    std::string value_ = string::Sprintf("%s/block%d.txt", var_store, shard_id);
+    std::unique_ptr<std::ofstream> vs(new std::ofstream(value_));
     auto shard_save_num =
         SaveValueToText(vs.get(), shard_values_[shard_id],
                         _shards_task_pool[shard_id], mode, shard_id);
     total_ins += shard_save_num;
+    vs->close();
+    std::string meta_ = string::Sprintf("%s/block%d.meta", var_store, shard_id);
+    std::unique_ptr<std::ofstream> ms(new std::ofstream(meta_));
+    SaveMetaToText(ms.get(), _config.common(), shard_id, total_ins);
+    ms->close();
   }
-  vs->close();
-
-  std::string meta_ = string::Sprintf("%s/%s.meta", var_store, shard_var_pre);
-  std::unique_ptr<std::ofstream> ms(new std::ofstream(meta_));
-  SaveMetaToText(ms.get(), _config.common(), _shard_idx, total_ins);
-  ms->close();
 
   auto end = GetCurrentUS();
   rwlock_->UNLock();
-  VLOG(0) << "save " << varname << " with path: " << value_
+  VLOG(0) << "save " << varname << " with path: " << dirname
           << " using: " << std::to_string((end - begin) / 1e+6) << " seconds";
 
   return 0;
@@ -374,18 +402,22 @@ int32_t CommonSparseTable::pour() {
   return 0;
 }
 
+uint32_t CommonSparseTable::get_thread_pool_index(uint64_t node_id) {
+  return node_id % shard_num % shard_num_per_table % task_pool_size_;
+}
+
 int32_t CommonSparseTable::pull_sparse(float* pull_values,
                                        const PullSparseValue& pull_value) {
-  auto shard_num = task_pool_size_;
-  std::vector<std::future<int>> tasks(shard_num);
+  std::vector<std::future<int>> tasks;
 
-  for (int shard_id = 0; shard_id < shard_num; ++shard_id) {
-    tasks[shard_id] = _shards_task_pool[shard_id]->enqueue(
-        [this, shard_id, shard_num, &pull_value, &pull_values]() -> int {
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
+    tasks.push_back(_shards_task_pool[shard_id % task_pool_size_]->enqueue(
+        [this, shard_id, &pull_value, &pull_values]() -> int {
           auto& block = shard_values_[shard_id];
-
+          // auto target = get_thread_pool_index_by_shard_index(shard_id);
           std::vector<int> offsets;
-          pull_value.Fission(shard_id, shard_num, &offsets);
+          pull_value.Fission(shard_id, shard_num, shard_num_per_table,
+                             &offsets);
 
           if (pull_value.is_training_) {
             for (auto& offset : offsets) {
@@ -405,7 +437,7 @@ int32_t CommonSparseTable::pull_sparse(float* pull_values,
           }
 
           return 0;
-        });
+        }));
   }
 
   for (size_t shard_id = 0; shard_id < tasks.size(); ++shard_id) {
@@ -417,17 +449,18 @@ int32_t CommonSparseTable::pull_sparse(float* pull_values,
 int32_t CommonSparseTable::pull_sparse_ptr(char** pull_values,
                                            const uint64_t* keys, size_t num) {
   std::vector<std::vector<uint64_t>> offset_bucket;
-  offset_bucket.resize(task_pool_size_);
+  offset_bucket.resize(_real_local_shard_num);
 
   for (int x = 0; x < num; ++x) {
-    auto y = keys[x] % task_pool_size_;
+    auto y = keys[x] % shard_num % shard_num_per_table;
+    // auto y = get_thread_pool_index(key[x]);
     offset_bucket[y].push_back(x);
   }
 
-  std::vector<std::future<int>> tasks(task_pool_size_);
+  std::vector<std::future<int>> tasks;
 
-  for (int shard_id = 0; shard_id < task_pool_size_; ++shard_id) {
-    tasks[shard_id] = _shards_task_pool[shard_id]->enqueue(
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
+    tasks.push_back(_shards_task_pool[shard_id % task_pool_size_]->enqueue(
         [this, shard_id, &keys, &offset_bucket, &pull_values]() -> int {
           auto& block = shard_values_[shard_id];
           auto& offsets = offset_bucket[shard_id];
@@ -442,7 +475,7 @@ int32_t CommonSparseTable::pull_sparse_ptr(char** pull_values,
           }
 
           return 0;
-        });
+        }));
   }
 
   for (size_t shard_id = 0; shard_id < tasks.size(); ++shard_id) {
@@ -454,23 +487,24 @@ int32_t CommonSparseTable::pull_sparse_ptr(char** pull_values,
 int32_t CommonSparseTable::_push_sparse(const uint64_t* keys,
                                         const float* values, size_t num) {
   std::vector<std::vector<uint64_t>> offset_bucket;
-  offset_bucket.resize(task_pool_size_);
+  offset_bucket.resize(_real_local_shard_num);
 
   for (int x = 0; x < num; ++x) {
-    auto y = keys[x] % task_pool_size_;
+    auto y = keys[x] % shard_num % shard_num_per_table;
+    // auto y = get_thread_pool_index(key[x]);
     offset_bucket[y].push_back(x);
   }
 
-  std::vector<std::future<int>> tasks(task_pool_size_);
+  std::vector<std::future<int>> tasks;
 
-  for (int shard_id = 0; shard_id < task_pool_size_; ++shard_id) {
-    tasks[shard_id] = _shards_task_pool[shard_id]->enqueue(
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
+    tasks.push_back(_shards_task_pool[shard_id % task_pool_size_]->enqueue(
         [this, shard_id, &keys, &values, num, &offset_bucket]() -> int {
           auto& offsets = offset_bucket[shard_id];
           optimizer_->update(keys, values, num, offsets,
                              shard_values_[shard_id].get());
           return 0;
-        });
+        }));
   }
 
   for (size_t shard_id = 0; shard_id < tasks.size(); ++shard_id) {
@@ -514,17 +548,18 @@ int32_t CommonSparseTable::push_sparse(const uint64_t* keys,
 int32_t CommonSparseTable::_push_sparse(const uint64_t* keys,
                                         const float** values, size_t num) {
   std::vector<std::vector<uint64_t>> offset_bucket;
-  offset_bucket.resize(task_pool_size_);
+  offset_bucket.resize(_real_local_shard_num);
 
   for (int x = 0; x < num; ++x) {
-    auto y = keys[x] % task_pool_size_;
+    auto y = keys[x] % shard_num % shard_num_per_table;
+    // auto y = get_thread_pool_index(key[x]);
     offset_bucket[y].push_back(x);
   }
 
-  std::vector<std::future<int>> tasks(task_pool_size_);
+  std::vector<std::future<int>> tasks;
 
-  for (int shard_id = 0; shard_id < task_pool_size_; ++shard_id) {
-    tasks[shard_id] = _shards_task_pool[shard_id]->enqueue(
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
+    tasks.push_back(_shards_task_pool[shard_id % task_pool_size_]->enqueue(
         [this, shard_id, &keys, &values, num, &offset_bucket]() -> int {
           auto& offsets = offset_bucket[shard_id];
           for (size_t i = 0; i < offsets.size(); ++i) {
@@ -533,7 +568,7 @@ int32_t CommonSparseTable::_push_sparse(const uint64_t* keys,
                                tmp_off, shard_values_[shard_id].get());
           }
           return 0;
-        });
+        }));
   }
 
   for (size_t shard_id = 0; shard_id < tasks.size(); ++shard_id) {
@@ -545,17 +580,18 @@ int32_t CommonSparseTable::_push_sparse(const uint64_t* keys,
 int32_t CommonSparseTable::push_sparse_param(const uint64_t* keys,
                                              const float* values, size_t num) {
   std::vector<std::vector<uint64_t>> offset_bucket;
-  offset_bucket.resize(task_pool_size_);
+  offset_bucket.resize(_real_local_shard_num);
 
   for (int x = 0; x < num; ++x) {
-    auto y = keys[x] % task_pool_size_;
+    auto y = keys[x] % shard_num % shard_num_per_table;
+    // auto y = get_thread_pool_index(key[x]);
     offset_bucket[y].push_back(x);
   }
 
-  std::vector<std::future<int>> tasks(task_pool_size_);
+  std::vector<std::future<int>> tasks;
 
-  for (int shard_id = 0; shard_id < task_pool_size_; ++shard_id) {
-    tasks[shard_id] = _shards_task_pool[shard_id]->enqueue(
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
+    tasks.push_back(_shards_task_pool[shard_id % task_pool_size_]->enqueue(
         [this, shard_id, &keys, &offset_bucket, &values]() -> int {
           auto& block = shard_values_[shard_id];
           auto& offsets = offset_bucket[shard_id];
@@ -569,7 +605,7 @@ int32_t CommonSparseTable::push_sparse_param(const uint64_t* keys,
             block->SetEntry(id, true);
           }
           return 0;
-        });
+        }));
   }
 
   for (size_t shard_id = 0; shard_id < tasks.size(); ++shard_id) {
@@ -584,7 +620,7 @@ int32_t CommonSparseTable::shrink(const std::string& param) {
   int threshold = std::stoi(param);
   VLOG(3) << "sparse table shrink: " << threshold;
 
-  for (int shard_id = 0; shard_id < task_pool_size_; ++shard_id) {
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
     // shrink
     VLOG(4) << shard_id << " " << task_pool_size_ << " begin shrink";
     shard_values_[shard_id]->Shrink(threshold);

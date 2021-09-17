@@ -33,7 +33,11 @@ int32_t SSDSparseTable::initialize() {
 
   auto common = _config.common();
   int size = static_cast<int>(common.params().size());
-
+  server_num = _shard_num;
+  shard_num = _config.shard_num();
+  shard_num_per_table = sparse_local_shard_num(shard_num, server_num);
+  shard_start = _shard_idx * shard_num_per_table;
+  shard_end = shard_start + _real_local_shard_num;
   size_t offset = 0;
   for (int x = 0; x < size; ++x) {
     auto& varname = common.params()[x];
@@ -63,16 +67,16 @@ int32_t SSDSparseTable::initialize() {
 
 int32_t SSDSparseTable::pull_sparse(float* pull_values,
                                     const PullSparseValue& pull_value) {
-  auto shard_num = task_pool_size_;
-  std::vector<std::future<int>> tasks(shard_num);
+  std::vector<std::future<int>> tasks;
 
-  for (int shard_id = 0; shard_id < shard_num; ++shard_id) {
-    tasks[shard_id] = _shards_task_pool[shard_id]->enqueue(
-        [this, shard_id, shard_num, &pull_value, &pull_values]() -> int {
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
+    tasks.push_back(_shards_task_pool[shard_id % task_pool_size_]->enqueue(
+        [this, shard_id, &pull_value, &pull_values]() -> int {
           auto& block = shard_values_[shard_id];
 
           std::vector<int> offsets;
-          pull_value.Fission(shard_id, shard_num, &offsets);
+          pull_value.Fission(shard_id, shard_num, shard_num_per_table,
+                             &offsets);
 
           for (auto& offset : offsets) {
             auto feasign = pull_value.feasigns_[offset];
@@ -116,7 +120,7 @@ int32_t SSDSparseTable::pull_sparse(float* pull_values,
                         pull_values + param_dim_ * offset);
           }
           return 0;
-        });
+        }));
   }
 
   for (size_t shard_id = 0; shard_id < tasks.size(); ++shard_id) {
@@ -127,19 +131,20 @@ int32_t SSDSparseTable::pull_sparse(float* pull_values,
 
 int32_t SSDSparseTable::pull_sparse_ptr(char** pull_values,
                                         const uint64_t* keys, size_t num) {
-  auto shard_num = task_pool_size_;
-  std::vector<std::future<int>> tasks(shard_num);
+  std::vector<std::future<int>> tasks
 
-  std::vector<std::vector<uint64_t>> offset_bucket;
-  offset_bucket.resize(task_pool_size_);
+      std::vector<std::vector<uint64_t>>
+          offset_bucket;
+  offset_bucket.resize(_real_local_shard_num);
 
   for (int x = 0; x < num; ++x) {
-    auto y = keys[x] % task_pool_size_;
+    auto y = keys[x] % shard_num % shard_num_per_table;
+    // auto y = get_thread_pool_index(key[x]);
     offset_bucket[y].push_back(x);
   }
 
-  for (int shard_id = 0; shard_id < shard_num; ++shard_id) {
-    tasks[shard_id] = _shards_task_pool[shard_id]->enqueue(
+  for (int shard_id = 0; shard_id < _real_local_shard_num; ++shard_id) {
+    tasks.push_back(_shards_task_pool[shard_id % task_pool_size_]->enqueue(
         [this, shard_id, &keys, &pull_values, &offset_bucket]() -> int {
           auto& block = shard_values_[shard_id];
           auto& offsets = offset_bucket[shard_id];
@@ -177,7 +182,7 @@ int32_t SSDSparseTable::pull_sparse_ptr(char** pull_values,
             pull_values[offset] = (char*)value;
           }
           return 0;
-        });
+        }));
   }
 
   for (size_t shard_id = 0; shard_id < tasks.size(); ++shard_id) {
@@ -194,7 +199,7 @@ int32_t SSDSparseTable::update_table() {
   int db_size = 3 + value_size;
   float tmp_value[db_size];
 
-  for (size_t i = 0; i < task_pool_size_; ++i) {
+  for (size_t i = 0; i < _real_local_shard_num; ++i) {
     auto& block = shard_values_[i];
 
     for (auto& table : block->values_) {
@@ -312,13 +317,15 @@ int64_t SSDSparseTable::LoadFromText(
     auto values = paddle::string::split_string<std::string>(line, "\t");
     auto id = lexical_cast<uint64_t>(values[0]);
 
-    if (id % pserver_num != pserver_id) {
+    size_t shard_id = id_list[i] % shard_num;
+    if (shard_id >= shard_end || shard_id < shard_start) {
       VLOG(3) << "will not load " << values[0] << " from " << valuepath
               << ", please check id distribution";
       continue;
     }
 
-    auto shard_id = id % local_shard_num;
+    // auto shard_id = id % local_shard_num;
+    shard_id -= shard_start;
     auto block = blocks->at(shard_id);
 
     std::vector<std::vector<float>> kvalues;
