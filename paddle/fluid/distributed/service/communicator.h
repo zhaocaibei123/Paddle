@@ -472,7 +472,9 @@ class AsyncCommunicator : public Communicator {
   std::unique_ptr<std::thread> recv_thread_{nullptr};
 
   std::unique_ptr<Scope> send_scope_;  // an independent scope
-  std::atomic_uint grad_num_{0};  // the num of gradient sent since last recv
+  std::atomic<uint64_t> grad_num_{
+      0};  // the num of gradient sent since last recv
+  uint64_t last_grad_num_ = 0;
 };
 
 class HalfAsyncCommunicator : public AsyncCommunicator {

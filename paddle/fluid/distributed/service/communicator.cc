@@ -440,9 +440,11 @@ void AsyncCommunicator::RecvThread() {
 
   while (running_) {
     int grad_num = grad_num_.load();
-    if (grad_num >= min_send_grad_num_before_recv_) {
+    if (grad_num - last_grad_num_ > min_send_grad_num_before_recv_) {
       RecvByCommunicator();
-      grad_num_.store(0);
+      // grad_num_.store(0);
+      last_grad_num_ = grad_num;
+      VLOG(0) << "debug zcb pull dense last_grad_num: " << last_grad_num_;
     } else {
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
