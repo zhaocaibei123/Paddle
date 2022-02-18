@@ -264,8 +264,8 @@ class DAdamD2Sum : public DenseOptimizer {
 // for data_norm
 class DSummary : public DenseOptimizer {
  public:
-  explicit DAdamD2Sum(const CommonAccessorParameter& accessor,
-                      std::vector<std::vector<float>>* values) {
+  explicit DSummary(const CommonAccessorParameter& accessor,
+                    std::vector<std::vector<float>>* values) {
     auto& names = accessor.params();
     for (int x = 0; x < static_cast<int>(names.size()); ++x) {
       if (names[x] == "Param") {
