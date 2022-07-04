@@ -307,7 +307,16 @@ void MemorySparseTable::Revert() {
 }
 
 void MemorySparseTable::CheckSavePrePatchDone() {
-  _save_patch_model_thread.join();
+  VLOG(0) << "debug zcb CheckSavePrePatchDone";
+//  if (_save_patch_model_thread.joinable()) {
+//    VLOG(0) << "debug zcb joinable";
+    VLOG(0) << "debug zcb joinable: " << _save_patch_model_thread.joinable();
+   if (_real_local_shard_num > 0) {
+    _save_patch_model_thread.join();
+   }
+//  } else {
+//    VLOG(0) << "debug zcb not joinable";
+//  }
 }
 
 int32_t MemorySparseTable::Save(const std::string& dirname,
@@ -327,6 +336,8 @@ int32_t MemorySparseTable::Save(const std::string& dirname,
     _local_shards_new.reset(new shard_type[_real_local_shard_num]);
     _save_patch_model_thread = std::thread(std::bind(
         &MemorySparseTable::SavePatch, this, std::string(dirname), save_param));
+    //_save_patch_model_thread.join();
+    //SavePatch(std::string(dirname), save_param);
     return 0;
   }
 
@@ -343,7 +354,7 @@ int32_t MemorySparseTable::Save(const std::string& dirname,
 
   int thread_num = _real_local_shard_num < 20 ? _real_local_shard_num : 20;
   omp_set_num_threads(thread_num);
-#pragma omp parallel for schedule(dynamic)
+  #pragma omp parallel for schedule(dynamic)
   for (size_t i = 0; i < _real_local_shard_num; ++i) {
     CostTimer timer("sparse table save shard");
     FsChannelConfig channel_config;
@@ -425,6 +436,7 @@ int32_t MemorySparseTable::Save(const std::string& dirname,
               << channel_config.path << " feasign_size: " << feasign_size;
   }
   _local_show_threshold = tk.top();
+  LOG(INFO) << "local cache threshold: " << _local_show_threshold;
   // int32 may overflow need to change return value
   return 0;
 }
@@ -439,11 +451,12 @@ int32_t MemorySparseTable::SavePatch(const std::string& path, int save_param) {
   _afs_client.remove(paddle::string::format_string(
       "%s/part-%03d-*", table_path.c_str(), _shard_idx));
   int thread_num = _m_real_local_shard_num < 20 ? _m_real_local_shard_num : 20;
+  VLOG(0) << "debug zcb save patch thread_num: " << thread_num;
 
   std::atomic<uint32_t> feasign_size_all{0};
 
-  omp_set_num_threads(thread_num);
-#pragma omp parallel for schedule(dynamic)
+//  omp_set_num_threads(thread_num);
+//  #pragma omp parallel for schedule(dynamic)
   for (size_t i = 0; i < _m_real_local_shard_num; ++i) {
     FsChannelConfig channel_config;
     channel_config.path =
@@ -551,8 +564,8 @@ int64_t MemorySparseTable::CacheShuffle(
         paddle::framework::MakeChannel<std::pair<uint64_t, std::string>>());
   }
 
-  omp_set_num_threads(thread_num);
-#pragma omp parallel for schedule(dynamic)
+//  omp_set_num_threads(thread_num);
+//  #pragma omp parallel for schedule(dynamic)
   for (size_t i = 0; i < _real_local_shard_num; ++i) {
     paddle::framework::ChannelWriter<std::pair<uint64_t, std::string>>& writer =
         writers[i];
@@ -578,10 +591,11 @@ int64_t MemorySparseTable::CacheShuffle(
     }
     writer.Flush();
     writer.channel()->Close();
+    VLOG(0) << "debug zcb cache shuffle finish shard " << i;
   }
-  // LOG(INFO) << "MemorySparseTable cache KV save success to Channel feasigh
-  // size: " << feasign_size << " and start sparse cache data shuffle real local
-  // shard num: " << _real_local_shard_num;
+  LOG(INFO) << "MemorySparseTable cache KV save success to Channel feasign size: " 
+            << feasign_size << " and start sparse cache data shuffle real local shard num: "
+            << _real_local_shard_num;
   std::vector<std::pair<uint64_t, std::string>> local_datas;
   for (size_t idx_shard = 0; idx_shard < _real_local_shard_num; ++idx_shard) {
     paddle::framework::ChannelWriter<std::pair<uint64_t, std::string>>& writer =
@@ -619,16 +633,20 @@ int64_t MemorySparseTable::CacheShuffle(
         total_status.push_back(std::move(ret));
         send_data_size[i] += ars[i].Length();
       }
+      VLOG(0) << "debug zcb end send shuffled_ins " << idx_shard;
       for (auto& t : total_status) {
         t.wait();
       }
+      VLOG(0) << "debug zcb end send shuffled_ins wait " << idx_shard;
       ars.clear();
       ars = std::vector<paddle::framework::BinaryArchive>(shuffle_node_num);
       data = std::vector<std::pair<uint64_t, std::string>>();
     }
+    VLOG(0) << "debug zcb end send shard: " << idx_shard;
   }
   shuffled_channel->Write(std::move(local_datas));
-  // LOG(INFO) << "cache shuffle finished";
+  LOG(INFO) << "cache shuffle finished";
+  VLOG(0) << "debug zcb shuffled_ins.size in table " << shuffled_channel->Size();
   return 0;
 }
 

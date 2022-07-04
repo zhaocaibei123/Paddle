@@ -175,6 +175,7 @@ int32_t BrpcPsServer::ReceiveFromPServer(int msg_type, int pserver_id,
   }
   CHECK(ar.Cursor() == ar.Finish());
   this->_shuffled_ins->Write(std::move(data));
+  VLOG(0) << "debug zcb receive shuffled_ins";
   return 0;
 }
 
@@ -731,6 +732,9 @@ int32_t BrpcPsService::CacheShuffle(Table *table,
 
   table->CacheShuffle(request.params(0), request.params(1), cache_threshold,
                       send_msg_func, _server->_shuffled_ins, table_ptrs);
+  VLOG(0) << "debug zcb shuffled_ins.size " <<  _server->_shuffled_ins->Size();
+//  _server->_shuffled_ins->Clear();
+//  VLOG(0) << "debug zcb shuffled_ins.size " <<  _server->_shuffled_ins->Size();
   return 0;
 }
 

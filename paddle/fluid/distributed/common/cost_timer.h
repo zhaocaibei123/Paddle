@@ -77,6 +77,8 @@ class CostTimer {
     if (_is_print_cost) {
       VLOG(0) << "CostTimer label:" << _label
               << ", cost:" << butil::gettimeofday_us() - _start_time_ms << "ms";
+             // "ms, begin:" 
+             // << _start_time_ms;
     } else {
       *(_profiler_node->recorder) << butil::gettimeofday_us() - _start_time_ms;
     }

@@ -128,6 +128,7 @@ std::shared_ptr<FILE> localfs_open_write(std::string path,
   }
 
   fs_add_write_converter_internal(path, is_pipe, converter);
+  VLOG(0) << "debug zcb write local: " << path;
   return fs_open_internal(path, is_pipe, "w", localfs_buffer_size());
 }
 
