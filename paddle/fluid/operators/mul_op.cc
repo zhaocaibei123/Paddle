@@ -397,17 +397,14 @@ REGISTER_OPERATOR(mul_grad,
 
 REGISTER_OPERATOR(mul_grad_grad, ops::MulDoubleGradOp);
 
-REGISTER_OP_CPU_KERNEL(
-    mul,
-    ops::MulKernel<paddle::platform::CPUDeviceContext, float>,
-    ops::MulKernel<paddle::platform::CPUDeviceContext, double>);
+REGISTER_OP_CPU_KERNEL(mul,
+                       ops::MulKernel<phi::CPUContext, float>,
+                       ops::MulKernel<phi::CPUContext, double>);
 
-REGISTER_OP_CPU_KERNEL(
-    mul_grad,
-    ops::MulGradKernel<paddle::platform::CPUDeviceContext, float>,
-    ops::MulGradKernel<paddle::platform::CPUDeviceContext, double>);
+REGISTER_OP_CPU_KERNEL(mul_grad,
+                       ops::MulGradKernel<phi::CPUContext, float>,
+                       ops::MulGradKernel<phi::CPUContext, double>);
 
-REGISTER_OP_CPU_KERNEL(
-    mul_grad_grad,
-    ops::MulDoubleGradKernel<paddle::platform::CPUDeviceContext, float>,
-    ops::MulDoubleGradKernel<paddle::platform::CPUDeviceContext, double>);
+REGISTER_OP_CPU_KERNEL(mul_grad_grad,
+                       ops::MulDoubleGradKernel<phi::CPUContext, float>,
+                       ops::MulDoubleGradKernel<phi::CPUContext, double>);
