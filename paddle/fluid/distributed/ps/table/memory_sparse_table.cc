@@ -307,10 +307,10 @@ void MemorySparseTable::Revert() {
 }
 
 void MemorySparseTable::CheckSavePrePatchDone() {
-  VLOG(0) << "debug zcb CheckSavePrePatchDone";
+  VLOG(0) << "debug CheckSavePrePatchDone";
 //  if (_save_patch_model_thread.joinable()) {
 //    VLOG(0) << "debug zcb joinable";
-    VLOG(0) << "debug zcb joinable: " << _save_patch_model_thread.joinable();
+    VLOG(0) << "debug joinable: " << _save_patch_model_thread.joinable();
    if (_real_local_shard_num > 0) {
     _save_patch_model_thread.join();
    }
@@ -409,7 +409,7 @@ int32_t MemorySparseTable::Save(const std::string& dirname,
           ++feasign_size;
         }
       }
-      VLOG(0) << "debug zcb begin close " << channel_config.path;
+      //VLOG(0) << "debug zcb begin close " << channel_config.path;
       CostTimer timer12("sparse table save shard close");
       write_channel->close();
       if (err_no == -1) {
@@ -451,7 +451,7 @@ int32_t MemorySparseTable::SavePatch(const std::string& path, int save_param) {
   _afs_client.remove(paddle::string::format_string(
       "%s/part-%03d-*", table_path.c_str(), _shard_idx));
   int thread_num = _m_real_local_shard_num < 20 ? _m_real_local_shard_num : 20;
-  VLOG(0) << "debug zcb save patch thread_num: " << thread_num;
+  VLOG(1) << "debug zcb save patch thread_num: " << thread_num;
 
   std::atomic<uint32_t> feasign_size_all{0};
 
@@ -591,7 +591,7 @@ int64_t MemorySparseTable::CacheShuffle(
     }
     writer.Flush();
     writer.channel()->Close();
-    VLOG(0) << "debug zcb cache shuffle finish shard " << i;
+    VLOG(1) << "debug zcb cache shuffle finish shard " << i;
   }
   LOG(INFO) << "MemorySparseTable cache KV save success to Channel feasign size: " 
             << feasign_size << " and start sparse cache data shuffle real local shard num: "
@@ -633,20 +633,20 @@ int64_t MemorySparseTable::CacheShuffle(
         total_status.push_back(std::move(ret));
         send_data_size[i] += ars[i].Length();
       }
-      VLOG(0) << "debug zcb end send shuffled_ins " << idx_shard;
+      VLOG(1) << "debug zcb end send shuffled_ins " << idx_shard;
       for (auto& t : total_status) {
         t.wait();
       }
-      VLOG(0) << "debug zcb end send shuffled_ins wait " << idx_shard;
+      VLOG(1) << "debug zcb end send shuffled_ins wait " << idx_shard;
       ars.clear();
       ars = std::vector<paddle::framework::BinaryArchive>(shuffle_node_num);
       data = std::vector<std::pair<uint64_t, std::string>>();
     }
-    VLOG(0) << "debug zcb end send shard: " << idx_shard;
+    VLOG(1) << "debug zcb end send shard: " << idx_shard;
   }
   shuffled_channel->Write(std::move(local_datas));
   LOG(INFO) << "cache shuffle finished";
-  VLOG(0) << "debug zcb shuffled_ins.size in table " << shuffled_channel->Size();
+  VLOG(1) << "debug zcb shuffled_ins.size in table " << shuffled_channel->Size();
   return 0;
 }
 

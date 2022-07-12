@@ -99,7 +99,7 @@ class Hogwild(DeviceWorker):
 
         dense_table_set = set()
         program_id = str(id(self._program))
-        print("device worker program id:", program_id)
+        #print("device worker program id:", program_id)
         if self._program == None:
             print("program of current device worker is not configured")
             exit(-1)
@@ -121,15 +121,15 @@ class Hogwild(DeviceWorker):
             return
 
         program_configs = opt_info["program_configs"]
-        print("device worker program_configs:", program_configs)
+        #print("device worker program_configs:", program_configs)
 
         for pid in program_configs:
-            print("device worker", pid, program_id)
+            #print("device worker", pid, program_id)
             if pid == program_id:
                 pc = downpour.program_config.add()
                 pc.program_id = program_id
-                print("device worker pull dense:",
-                      program_configs[program_id]["pull_dense"])
+#                print("device worker pull dense:",
+#                      program_configs[program_id]["pull_dense"])
                 for i in program_configs[program_id]["push_sparse"]:
                     pc.push_sparse_table_id.extend([i])
                 for i in program_configs[program_id]["push_dense"]:
@@ -190,7 +190,7 @@ class Hogwild(DeviceWorker):
             hogwild.skip_ops.extend(worker.get_desc().skip_op)
         else:
             dense_table_config = opt_info.get("dense_table_config")
-            print("device worker dense_table_config:", dense_table_config)
+            #print("device worker dense_table_config:", dense_table_config)
             for table_id, varnames in dense_table_config.items():
                 dense_table = pull_thread.dense_table.add()
                 dense_table.dense_value_name.extend(varnames)
@@ -218,7 +218,7 @@ class DownpourLite(DeviceWorker):
         Args:
             trainer_desc(TrainerDesc): a TrainerDesc object
         """
-        print("create DownpourLiteWorker")
+        #print("create DownpourLiteWorker")
         trainer_desc.device_worker_name = "DownpourLiteWorker"
         if self._infer:
             # just ignore feed op for inference model
@@ -229,7 +229,7 @@ class DownpourLite(DeviceWorker):
 
         dense_table_set = set()
         program_id = str(id(self._program))
-        print("device worker program id:", program_id)
+        #print("device worker program id:", program_id)
         if self._program == None:
             print("program of current device worker is not configured")
             exit(-1)
@@ -249,15 +249,15 @@ class DownpourLite(DeviceWorker):
             return
 
         program_configs = opt_info["program_configs"]
-        print("device worker program_configs:", program_configs)
+        #print("device worker program_configs:", program_configs)
 
         for pid in program_configs:
-            print("device worker", pid, program_id)
+            #print("device worker", pid, program_id)
             if pid == program_id:
                 pc = downpour.program_config.add()
                 pc.program_id = program_id
-                print("device worker pull dense:",
-                      program_configs[program_id]["pull_dense"])
+#                print("device worker pull dense:",
+#                      program_configs[program_id]["pull_dense"])
                 for i in program_configs[program_id]["push_sparse"]:
                     pc.push_sparse_table_id.extend([i])
                 for i in program_configs[program_id]["push_dense"]:
@@ -317,7 +317,7 @@ class DownpourLite(DeviceWorker):
             downpour.skip_ops.extend(worker.get_desc().skip_op)
         else:
             dense_table_config = opt_info.get("dense_table_config")
-            print("device worker dense_table_config:", dense_table_config)
+#            print("device worker dense_table_config:", dense_table_config)
             for table_id, varnames in dense_table_config.items():
                 dense_table = pull_thread.dense_table.add()
                 dense_table.dense_value_name.extend(varnames)

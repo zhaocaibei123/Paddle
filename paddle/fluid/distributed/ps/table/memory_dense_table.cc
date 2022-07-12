@@ -61,6 +61,12 @@ int32_t MemoryDenseTable::Initialize() {
 
   InitializeValue();
   InitializeOptimizer();
+  
+  int avg_num = static_cast<int>(_config.common().table_num() / _config.common().trainer_num() + 1);
+  padding_num = avg_num - param_dim_;
+  VLOG(0) << "table " <<  _config.common().table_name() 
+          << " param_dim: " << param_dim_
+          << " padding_num: " << padding_num;
   return 0;
 }
 
@@ -363,8 +369,10 @@ int32_t MemoryDenseTable::Save(const std::string& path,
     for (int x = 0; x < param_dim_; ++x) {
       result_buffer_param.emplace_back(
           std::to_string(values_[param_idx_][x]));
-   }
-
+    }
+    for (int x = 0; x < padding_num; ++ x) {
+      result_buffer_param.emplace_back("0.000000");
+    }
   } else {
     CostTimer timer3("save dense build d2sum");
     std::ostringstream os;
@@ -377,6 +385,10 @@ int32_t MemoryDenseTable::Save(const std::string& path,
         os << values_[param_col_ids_[x]][y];
       }
      result_buffer_param.emplace_back(std::move(os.str()));
+    }
+    
+    for (int y = 0; y < padding_num; ++ y) {
+      result_buffer_param.emplace_back("0 0 0 0 0");
     }
   }
 

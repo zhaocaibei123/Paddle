@@ -191,7 +191,7 @@ class DistributedOpsPass(PassBase):
             op_type = ops[0].type
 
             slots = [op.attr("slot") for op in ops]
-            print('debug zcb slots: ', slots)
+            #print('debug zcb slots: ', slots)
             outputs = [
                 _program.global_block().vars[op.input("Out@GRAD")[0]]
                 for op in ops

@@ -339,8 +339,8 @@ def get_dense_send_context(program,
             var_numel += reduce(lambda x, y: x * y, var.shape)
         grad_name = "Dense@GRAD_" + str(idx)
         aggregate = True
-        print("public get_dense_send_context dense_table:", grad_name,
-              var_numel, origin_varnames)
+#        print("public get_dense_send_context dense_table:", grad_name,
+#              var_numel, origin_varnames)
         from paddle.fluid.core import CommContext
         dense_ctx = CommContext(grad_name, [grad_name], ["127.0.0.1:6071"],
                                 [var_numel], origin_varnames, trainer_id,
@@ -362,8 +362,8 @@ def get_dense_send_context(program,
             var_numel += reduce(lambda x, y: x * y, var.shape)
         grad_name = "DataNorm@GRAD_" + str(idx)
         aggregate = True
-        print("public get_dense_send_context data_norm table:", grad_name,
-              var_numel, origin_varnames)
+#        print("public get_dense_send_context data_norm table:", grad_name,
+#              var_numel, origin_varnames)
         from paddle.fluid.core import CommContext
         data_norm_ctx = CommContext(grad_name, [grad_name], ["127.0.0.1:6071"],
                                     [var_numel], origin_varnames, trainer_id,

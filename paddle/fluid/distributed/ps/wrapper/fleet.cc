@@ -34,7 +34,7 @@ std::shared_ptr<paddle::distributed::PSCore> FleetWrapper::pserver_ptr_ = NULL;
 std::shared_ptr<paddle::distributed::PSClient> FleetWrapper::worker_ptr_ = NULL;
 
 int FleetWrapper::RegisterHeterCallback(HeterCallBackFunc handler) {
-  VLOG(0) << "RegisterHeterCallback support later";
+  VLOG(1) << "RegisterHeterCallback support later";
   return 0;
 }
 

@@ -521,7 +521,7 @@ std::future<int32_t> BrpcPsClient::CheckSavePrePatchDone() {
 }
 
 std::future<int32_t> BrpcPsClient::Flush() {
-  VLOG(0) << "BrpcPsClient::flush begin";
+  VLOG(3) << "BrpcPsClient::flush begin";
   _flushing = true;
   std::promise<int> promise;
   std::future<int32_t> fut = promise.get_future();
@@ -532,7 +532,7 @@ std::future<int32_t> BrpcPsClient::Flush() {
   VLOG(1) << "flush _async_call_num = 0";
   promise.set_value(0);
   _flushing = false;
-  VLOG(0) << "BrpcPsClient::flush done";
+  VLOG(3) << "BrpcPsClient::flush done";
   PrintQueueSize();
   return fut;
 }
@@ -541,14 +541,14 @@ void BrpcPsClient::PrintQueueSize() {
   for (auto &push_sparse_task_itr : _push_sparse_task_queue_map) {
     auto table_id = push_sparse_task_itr.first;
     auto queue_size = push_sparse_task_itr.second->Size();
-    VLOG(0) << "BrpcPsClient::PrintQueueSize: table " << table_id
+    VLOG(1) << "BrpcPsClient::PrintQueueSize: table " << table_id
             << " size: " << queue_size;
   }
 
   for (auto &task_queue_itr : _push_dense_task_queue_map) {
     auto table_id = task_queue_itr.first;
     auto queue_size = task_queue_itr.second->Size();
-    VLOG(0) << "BrpcPsClient::PrintQueueSize: table " << table_id
+    VLOG(1) << "BrpcPsClient::PrintQueueSize: table " << table_id
             << " size: " << queue_size;
   }
 }

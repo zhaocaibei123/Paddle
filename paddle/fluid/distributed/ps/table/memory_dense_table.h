@@ -74,6 +74,7 @@ class MemoryDenseTable : public Table {
   int total_dim_ = 0;
   int fixed_len_params_dim_ = 0;    // used for save/load
   std::vector<int> param_col_ids_;  // used for save/load
+  int padding_num = 0;
 };
 
 }  // namespace distributed
