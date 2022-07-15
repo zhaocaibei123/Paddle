@@ -312,7 +312,9 @@ void MemorySparseTable::Revert() {
 }
 
 void MemorySparseTable::CheckSavePrePatchDone() {
-  _save_patch_model_thread.join();
+  if (_save_patch_model_thread.joinable()) {
+    _save_patch_model_thread.join();
+  }
 }
 
 int32_t MemorySparseTable::Save(const std::string& dirname,
@@ -450,8 +452,8 @@ int32_t MemorySparseTable::SavePatch(const std::string& path, int save_param) {
 
   std::atomic<uint32_t> feasign_size_all{0};
 
-  omp_set_num_threads(thread_num);
-#pragma omp parallel for schedule(dynamic)
+//  omp_set_num_threads(thread_num);
+//#pragma omp parallel for schedule(dynamic)
   for (size_t i = 0; i < _m_real_local_shard_num; ++i) {
     FsChannelConfig channel_config;
     channel_config.path =
