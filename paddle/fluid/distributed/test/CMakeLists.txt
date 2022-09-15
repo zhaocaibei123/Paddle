@@ -105,4 +105,4 @@ set_source_files_properties(
 cc_test(
   memory_sparse_geo_table_test
   SRCS memory_geo_table_test.cc
-  DEPS ${COMMON_DEPS} table)
+  DEPS ${COMMON_DEPS} table brpc afs_api)

@@ -110,7 +110,9 @@ cc_library(
        scope
        math_function
        selected_rows_functor
-       ${RPC_DEPS})
+       ${RPC_DEPS}
+       #afs_api
+       )
 
 cc_library(
   heter_client

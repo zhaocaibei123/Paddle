@@ -1,3 +1,7 @@
+#if(WITH_PSCORE)
+#  set(BRPC_DEPS afs_api)
+#endif()
+
 if(WITH_PSLIB)
   if(WITH_PSLIB_BRPC)
     set(BRPC_DEPS pslib_brpc)

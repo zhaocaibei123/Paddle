@@ -194,7 +194,8 @@ cc_test(
 
 set(BRPC_DEPS "")
 if(WITH_PSCORE)
-  set(BRPC_DEPS brpc ssl crypto)
+    set(BRPC_DEPS brpc ssl crypto)
+    #  set(BRPC_DEPS afs_api)
 endif()
 if(WITH_PSLIB)
   if(WITH_PSLIB_BRPC)
@@ -799,7 +800,7 @@ if(WITH_DISTRIBUTE)
            heter_service_proto
            fleet
            heter_server
-           brpc
+           #brpc
            fleet_executor)
     set(DISTRIBUTE_COMPILE_FLAGS
         "-Wno-non-virtual-dtor -Wno-error=non-virtual-dtor -Wno-error=delete-non-virtual-dtor -Wno-error=parentheses"

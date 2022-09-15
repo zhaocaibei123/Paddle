@@ -349,10 +349,12 @@ function(cc_library TARGET_NAME)
     if(cc_library_SHARED OR cc_library_shared) # build *.so
       add_library(${TARGET_NAME} SHARED ${cc_library_SRCS})
     elseif(cc_library_INTERFACE OR cc_library_interface)
+      message("debug zcb aaa")
       generate_dummy_static_lib(
         LIB_NAME ${TARGET_NAME} FILE_PATH ${target_SRCS} GENERATOR
         "generic.cmake:cc_library")
     else()
+      message("debug zcb bbb")
       add_library(${TARGET_NAME} STATIC ${cc_library_SRCS})
       find_fluid_modules(${TARGET_NAME})
       find_phi_modules(${TARGET_NAME})
