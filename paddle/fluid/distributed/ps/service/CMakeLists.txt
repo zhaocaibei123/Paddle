@@ -112,7 +112,7 @@ cc_library(
        selected_rows_functor
        ${RPC_DEPS}
        #afs_api
-       )
+)
 
 cc_library(
   heter_client

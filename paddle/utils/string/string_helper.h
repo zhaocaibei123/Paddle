@@ -29,19 +29,19 @@ namespace paddle {
 namespace string {
 
 inline int start_with(const std::string& a, const std::string& b) {
-    return a.find(b) == 0 ? 1 : 0;
+  return a.find(b) == 0 ? 1 : 0;
 }
 
 inline int end_with(const std::string& a, const std::string& b) {
-    return a.rfind(b) == (a.length() - b.length()) ? 1 : 0;
+  return a.rfind(b) == (a.length() - b.length()) ? 1 : 0;
 }
 
 inline std::string trim_afs(const std::string& path) {
-    std::string path_name = path;
-    if (path.compare(0, 4, "afs:") == 0) {
-        path_name = path.substr(4);
-    }
-    return path_name;
+  std::string path_name = path;
+  if (path.compare(0, 4, "afs:") == 0) {
+    path_name = path.substr(4);
+  }
+  return path_name;
 }
 
 inline size_t count_spaces(const char* s) {
