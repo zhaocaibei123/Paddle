@@ -31,6 +31,8 @@
 #include "paddle/fluid/distributed/ps/table/depends/feature_value.h"
 #include "paddle/fluid/string/string_helper.h"
 
+#include "paddle/fluid/distributed/common/afs_api.h"
+
 #define PSERVER_SAVE_SUFFIX ".shard"
 
 namespace paddle {
@@ -129,6 +131,8 @@ class MemorySparseTable : public Table {
   std::unique_ptr<shard_type[]> _local_shards_new;
   std::unique_ptr<shard_type[]> _local_shards_patch_model;
   std::thread _save_patch_model_thread;
+
+  AfsApiWrapper a;
 };
 
 }  // namespace distributed

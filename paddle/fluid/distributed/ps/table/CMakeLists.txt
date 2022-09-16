@@ -107,6 +107,7 @@ cc_library(
        fs
        afs_wrapper
        rocksdb
-       eigen3)
+       eigen3
+       read_afs)
 
 target_link_libraries(table -fopenmp)
