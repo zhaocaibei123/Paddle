@@ -18,6 +18,21 @@ if(WITH_HETERPS)
       device_context
       rocksdb)
 
+elseif(WITH_PSCORE_BRPC)
+  set(BRPC_DEPS
+      afs_api
+      ssl
+      crypto
+      protobuf
+      gflags
+      glog
+      zlib
+      leveldb
+      snappy
+      gflags
+      glog
+      device_context)
+
 else()
 
   set(BRPC_DEPS

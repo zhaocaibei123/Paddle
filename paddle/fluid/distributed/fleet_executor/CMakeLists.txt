@@ -6,6 +6,8 @@ proto_library(interceptor_message_proto SRCS interceptor_message.proto)
 
 if(WITH_ARM_BRPC)
   set(BRPC_DEPS arm_brpc snappy gflags glog)
+elseif(WITH_PSCORE_BRPC)
+  set(BRPC_DEPS afs_api gflags glog)
 elseif(WITH_DISTRIBUTE AND WITH_PSCORE)
   set(BRPC_DEPS
       brpc

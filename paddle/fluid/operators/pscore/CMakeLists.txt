@@ -24,6 +24,29 @@ if(WITH_ARM_BRPC)
     glog
     snappy
     device_context)
+elseif(WITH_PSCORE_BRPC)
+  list(
+    APPEND
+    DISTRIBUTE_DEPS
+    executor
+    fleet
+    ps_service
+    brpc_utils
+    heter_server
+    heter_client
+    ps_framework_proto
+    framework_proto
+    sendrecv_rpc
+    afs_api
+    leveldb
+    ssl
+    crypto
+    protobuf
+    gflags
+    glog
+    zlib
+    snappy
+    device_context)
 else()
   list(
     APPEND
