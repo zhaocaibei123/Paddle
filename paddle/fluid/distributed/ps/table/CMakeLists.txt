@@ -41,7 +41,7 @@ cc_library(
   common_table
   SRCS ${TABLE_SRC}
   DEPS ${TABLE_DEPS}
-  #       ${RPC_DEPS}
+       #       ${RPC_DEPS}
        graph_edge
        graph_node
        device_context
@@ -108,6 +108,6 @@ cc_library(
        afs_wrapper
        rocksdb
        eigen3)
-   #       read_afs)
+#       read_afs)
 
 target_link_libraries(table -fopenmp)

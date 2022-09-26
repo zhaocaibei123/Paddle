@@ -132,7 +132,7 @@ class MemorySparseTable : public Table {
   std::unique_ptr<shard_type[]> _local_shards_patch_model;
   std::thread _save_patch_model_thread;
 
-//  AfsApiWrapper a;
+  //  AfsApiWrapper a;
 };
 
 }  // namespace distributed
