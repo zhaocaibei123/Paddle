@@ -422,6 +422,9 @@ if(WITH_PSCORE)
 
   include(external/rocksdb) # download, build, install rocksdb
   list(APPEND third_party_deps extern_rocksdb)
+
+  include(external/afs_api) # download, build, install rocksdb
+  list(APPEND third_party_deps afs_api)
 endif()
 
 if(WITH_XBYAK)
