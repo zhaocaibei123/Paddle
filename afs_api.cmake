@@ -13,7 +13,20 @@
 # limitations under the License.
 
 include(ExternalProject)
+###################
+# copy from brpc.cmake
 
+find_package(OpenSSL REQUIRED)
+
+message(STATUS "ssl:" ${OPENSSL_SSL_LIBRARY})
+message(STATUS "crypto:" ${OPENSSL_CRYPTO_LIBRARY})
+
+#ADD_LIBRARY(ssl SHARED IMPORTED GLOBAL)
+#SET_PROPERTY(TARGET ssl PROPERTY IMPORTED_LOCATION ${OPENSSL_SSL_LIBRARY})
+
+#ADD_LIBRARY(crypto SHARED IMPORTED GLOBAL)
+#SET_PROPERTY(TARGET crypto PROPERTY IMPORTED_LOCATION ${OPENSSL_CRYPTO_LIBRARY})
+###################
 set(AFS_API_PROJECT "extern_afs_api")
 if((NOT DEFINED AFS_API_VER) OR (NOT DEFINED AFS_API_URL))
   message(STATUS "use pre defined download url")
@@ -37,9 +50,12 @@ set(AFS_API_ROOT ${AFS_API_INSTALL_DIR})
 set(AFS_API_INC_DIR ${AFS_API_ROOT}/include)
 set(AFS_API_LIB_DIR ${AFS_API_ROOT}/lib)
 set(AFS_API_LIB
-    ${AFS_API_LIB_DIR}/libafsclient.a
+    ${AFS_API_LIB_DIR}/libafsdep.a
     CACHE FILEPATH "afs api lib" FORCE)
-set(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH}" "${AFS_API_ROOT}/lib")
+set(AFS_JVM_LIB
+    ${AFS_API_LIB_DIR}/libjvm.so
+    CACHE FILEPATH "afs api lib" FORCE)
+#SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_RPATH}" "${AFS_API_ROOT}/lib")
 
 include_directories(${AFS_API_INC_DIR})
 
@@ -55,10 +71,8 @@ ExternalProject_Add(
   ${EXTERNAL_PROJECT_LOG_ARGS}
   PREFIX ${AFS_API_SOURCE_DIR}
   DOWNLOAD_DIR ${AFS_API_DOWNLOAD_DIR}
-  #DOWNLOAD_COMMAND wget --no-check-certificate ${AFS_API_URL} -c -q -O
-  #                 ${AFS_API_NAME}.tar.gz && tar zxvf ${AFS_API_NAME}.tar.gz
-  DOWNLOAD_COMMAND cp /work/git/baidu/inf/afs-api/${AFS_API_NAME}.tar.gz . &&
-                   tar xzvf ${AFS_API_NAME}.tar.gz
+  DOWNLOAD_COMMAND wget --no-check-certificate ${AFS_API_URL} -c -q -O
+                   ${AFS_API_NAME}.tar.gz && tar zxvf ${AFS_API_NAME}.tar.gz
   DOWNLOAD_NO_PROGRESS 1
   UPDATE_COMMAND ""
   CMAKE_ARGS -DCMAKE_INSTALL_PREFIX=${AFS_API_INSTALL_ROOT}
@@ -70,3 +84,7 @@ ExternalProject_Add(
 add_library(afs_api STATIC IMPORTED GLOBAL)
 set_property(TARGET afs_api PROPERTY IMPORTED_LOCATION ${AFS_API_LIB})
 add_dependencies(afs_api ${AFS_API_PROJECT})
+
+add_library(jvm SHARED IMPORTED GLOBAL)
+set_property(TARGET jvm PROPERTY IMPORTED_LOCATION ${AFS_JVM_LIB})
+add_dependencies(jvm ${AFS_API_PROJECT})
