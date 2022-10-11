@@ -296,7 +296,7 @@ int AfsApiWrapper::init(const char* fs_name,
                         const char* conf) {
   _afshandler =
       new afs::AfsFileSystem(fs_name, fs_user, pass, "./conf/client.conf");
-  int ret = _afshandler->Init(true, (com_logstatus() == 0));
+  int ret = _afshandler->Init(true, true);
   if (ret != 0) {
     return 1;
   }
