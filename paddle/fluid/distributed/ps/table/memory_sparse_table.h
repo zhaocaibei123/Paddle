@@ -26,11 +26,11 @@
 #include <vector>
 
 #include "Eigen/Dense"
+#include "paddle/fluid/distributed/common/afs_api.h"
 #include "paddle/fluid/distributed/ps/table/accessor.h"
 #include "paddle/fluid/distributed/ps/table/common_table.h"
 #include "paddle/fluid/distributed/ps/table/depends/feature_value.h"
 #include "paddle/fluid/string/string_helper.h"
-#include "paddle/fluid/distributed/common/afs_api.h"
 
 #define PSERVER_SAVE_SUFFIX ".shard"
 
